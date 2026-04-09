@@ -115,7 +115,7 @@
     <jline.version>3.30.9</jline.version>
     <jnr-constants.version>0.10.4</jnr-constants.version>
     <jnr-posix.version>3.1.21</jnr-posix.version>
-    <joda.time.version>2.12.7</joda.time.version>
+    <joda.time.version>2.14.1</joda.time.version>
     <jooq.version>3.11.10</jooq.version>
     <jsch.version>0.1.55</jsch.version>
     <json-simple.version>1.1.1</json-simple.version>
