@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.when;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -34,6 +35,7 @@ import org.apache.hadoop.ozone.om.helpers.OmBucketInfo;
 import org.apache.hadoop.ozone.om.helpers.OmKeyInfo;
 import org.apache.hadoop.ozone.om.request.OMRequestTestUtils;
 import org.apache.hadoop.ozone.om.response.OMClientResponse;
+import org.apache.hadoop.ozone.om.upgrade.OMLayoutFeature;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.OMRequest;
 import org.junit.jupiter.api.Test;
@@ -111,6 +113,57 @@ public class TestS3InitiateMultipartUploadRequest
         modifiedRequest.getInitiateMultiPartUploadRequest().getKeyArgs()
             .getModificationTime(), openMPUKeyInfo.getCreationTime());
 
+  }
+
+  @Test
+  public void testValidateAndUpdateCacheStampsSchemaVersionZeroBeforeFinalization()
+      throws Exception {
+    // The default harness layout version is 0 (pre-finalization), so a newly
+    // initiated upload must use the legacy inline schema (version 0).
+    String volumeName = UUID.randomUUID().toString();
+    String bucketName = UUID.randomUUID().toString();
+    String keyName = UUID.randomUUID().toString();
+
+    OMRequestTestUtils.addVolumeAndBucketToDB(volumeName, bucketName,
+        omMetadataManager, getBucketLayout());
+
+    OMRequest modifiedRequest =
+        doPreExecuteInitiateMPU(volumeName, bucketName, keyName);
+    getS3InitiateMultipartUploadReq(modifiedRequest)
+        .validateAndUpdateCache(ozoneManager, 100L);
+
+    String multipartKey = getMultipartKey(volumeName, bucketName, keyName,
+        modifiedRequest.getInitiateMultiPartUploadRequest()
+            .getKeyArgs().getMultipartUploadID());
+    assertEquals(0, omMetadataManager.getMultipartInfoTable()
+        .get(multipartKey).getSchemaVersion());
+  }
+
+  @Test
+  public void testValidateAndUpdateCacheStampsSchemaVersionOneAfterFinalization()
+      throws Exception {
+    // After MPU_PARTS_TABLE_SPLIT is finalized the stamped layout version
+    // permits the split parts table, so the upload is recorded as version 1.
+    when(ozoneManager.getVersionManager().getMetadataLayoutVersion())
+        .thenReturn(OMLayoutFeature.MPU_PARTS_TABLE_SPLIT.layoutVersion());
+
+    String volumeName = UUID.randomUUID().toString();
+    String bucketName = UUID.randomUUID().toString();
+    String keyName = UUID.randomUUID().toString();
+
+    OMRequestTestUtils.addVolumeAndBucketToDB(volumeName, bucketName,
+        omMetadataManager, getBucketLayout());
+
+    OMRequest modifiedRequest =
+        doPreExecuteInitiateMPU(volumeName, bucketName, keyName);
+    getS3InitiateMultipartUploadReq(modifiedRequest)
+        .validateAndUpdateCache(ozoneManager, 100L);
+
+    String multipartKey = getMultipartKey(volumeName, bucketName, keyName,
+        modifiedRequest.getInitiateMultiPartUploadRequest()
+            .getKeyArgs().getMultipartUploadID());
+    assertEquals(1, omMetadataManager.getMultipartInfoTable()
+        .get(multipartKey).getSchemaVersion());
   }
 
   @Test

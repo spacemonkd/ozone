@@ -188,6 +188,13 @@ public class S3InitiateMultipartUploadRequest extends OMKeyRequest {
                   bucketInfo.getDefaultReplicationConfig() :
                   null, ozoneManager);
 
+      // Stamp the storage schema based on the layout version captured in
+      // preExecute (replicated in the Ratis log). Only uploads initiated
+      // after MPU_PARTS_TABLE_SPLIT is finalized use the split parts table;
+      // in-flight uploads keep schemaVersion 0 and the legacy inline path.
+      byte schemaVersion = getOmRequest().getLayoutVersion().getVersion()
+          >= OMLayoutFeature.MPU_PARTS_TABLE_SPLIT.layoutVersion()
+          ? (byte) 1 : (byte) 0;
       multipartKeyInfo = new OmMultipartKeyInfo.Builder()
           .setUploadID(keyArgs.getMultipartUploadID())
           .setCreationTime(keyArgs.getModificationTime())
@@ -195,6 +202,7 @@ public class S3InitiateMultipartUploadRequest extends OMKeyRequest {
               replicationConfig)
           .setObjectID(objectID)
           .setUpdateID(transactionLogIndex)
+          .setSchemaVersion(schemaVersion)
           .build();
 
       omKeyInfo = new OmKeyInfo.Builder()
