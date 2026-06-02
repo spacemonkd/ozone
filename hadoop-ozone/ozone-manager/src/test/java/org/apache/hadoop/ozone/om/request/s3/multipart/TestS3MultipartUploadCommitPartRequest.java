@@ -18,6 +18,7 @@
 package org.apache.hadoop.ozone.om.request.s3.multipart;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -33,6 +34,7 @@ import java.util.stream.Collectors;
 import org.apache.hadoop.hdds.client.RatisReplicationConfig;
 import org.apache.hadoop.hdds.protocol.proto.HddsProtos;
 import org.apache.hadoop.hdds.protocol.proto.HddsProtos.ReplicationFactor;
+import org.apache.hadoop.hdds.utils.db.BatchOperation;
 import org.apache.hadoop.ozone.om.helpers.OmKeyInfo;
 import org.apache.hadoop.ozone.om.helpers.OmKeyLocationInfo;
 import org.apache.hadoop.ozone.om.helpers.OmMultipartKeyInfo;
@@ -198,6 +200,63 @@ public class TestS3MultipartUploadCommitPartRequest
 
     assertNull(omMetadataManager.getMultipartInfoTable().get(multipartKey));
 
+  }
+
+  /**
+   * Regression guard for the commit-after-abort path. When the multipart
+   * upload was aborted (no multipartInfoTable entry) but the part's open key
+   * still exists, the request throws NO_SUCH_MULTIPART_UPLOAD_ERROR and the
+   * response moves the orphaned part to the deleted table for GC. The null
+   * part-key check MUST run only after the open key (omKeyInfo) is resolved;
+   * otherwise the NO_SUCH response carries a null part and
+   * S3MultipartUploadCommitPartResponse#checkAndUpdateDB NPEs when the double
+   * buffer flushes it, terminating the OM. Unit tests that only assert the
+   * response status do not exercise that flush, so this test drives the
+   * response through checkAndUpdateDB to lock the ordering.
+   */
+  @Test
+  public void testValidateAndUpdateCacheCommitAfterAbortGarbageCollectsPart()
+      throws Exception {
+    String volumeName = UUID.randomUUID().toString();
+    String bucketName = UUID.randomUUID().toString();
+    String keyName = getKeyName();
+
+    OMRequestTestUtils.addVolumeAndBucketToDB(volumeName, bucketName,
+        omMetadataManager, getBucketLayout());
+
+    createParentPath(volumeName, bucketName);
+
+    long clientID = Time.now();
+    // Random uploadId => no multipartInfoTable entry (upload was aborted).
+    String multipartUploadID = UUID.randomUUID().toString();
+
+    OMRequest commitMultipartRequest = doPreExecuteCommitMPU(volumeName,
+        bucketName, keyName, clientID, multipartUploadID, 1);
+
+    S3MultipartUploadCommitPartRequest s3MultipartUploadCommitPartRequest =
+        getS3MultipartUploadCommitReq(commitMultipartRequest);
+
+    // The part's open key still exists (written during the part upload,
+    // before the abort).
+    addKeyToOpenKeyTable(volumeName, bucketName, keyName, clientID);
+
+    OMClientResponse omClientResponse =
+        s3MultipartUploadCommitPartRequest.validateAndUpdateCache(ozoneManager,
+            2L);
+
+    assertSame(OzoneManagerProtocolProtos.Status.NO_SUCH_MULTIPART_UPLOAD_ERROR,
+        omClientResponse.getOMResponse().getStatus());
+
+    // Flushing the error response must not NPE, and the orphaned part must be
+    // moved to the deleted table for garbage collection.
+    BatchOperation batchOperation =
+        omMetadataManager.getStore().initBatchOperation();
+    omClientResponse.checkAndUpdateDB(omMetadataManager, batchOperation);
+    omMetadataManager.getStore().commitBatchOperation(batchOperation);
+
+    assertFalse(omMetadataManager.getDeletedTable()
+            .getRangeKVs(null, 100, "").isEmpty(),
+        "orphaned part should be moved to the deleted table for GC");
   }
 
   @Test

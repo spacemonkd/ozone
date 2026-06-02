@@ -46,6 +46,7 @@ import org.apache.hadoop.ozone.om.request.file.OMFileRequest;
 import org.apache.hadoop.ozone.om.request.util.OmResponseUtil;
 import org.apache.hadoop.ozone.om.response.OMClientResponse;
 import org.apache.hadoop.ozone.om.response.s3.multipart.S3InitiateMultipartUploadResponseWithFSO;
+import org.apache.hadoop.ozone.om.upgrade.OMLayoutFeature;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.KeyArgs;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.MultipartInfoInitiateRequest;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.MultipartInfoInitiateResponse;
@@ -161,6 +162,13 @@ public class S3InitiateMultipartUploadRequestWithFSO
                   bucketInfo.getDefaultReplicationConfig() :
                   null, ozoneManager);
 
+      // Stamp the storage schema based on the layout version captured in
+      // preExecute (replicated in the Ratis log). Only uploads initiated
+      // after MPU_PARTS_TABLE_SPLIT is finalized use the split parts table;
+      // in-flight uploads keep schemaVersion 0 and the legacy inline path.
+      byte schemaVersion = getOmRequest().getLayoutVersion().getVersion()
+          >= OMLayoutFeature.MPU_PARTS_TABLE_SPLIT.layoutVersion()
+          ? (byte) 1 : (byte) 0;
       multipartKeyInfo = new OmMultipartKeyInfo.Builder()
           .setUploadID(keyArgs.getMultipartUploadID())
           .setCreationTime(keyArgs.getModificationTime())
@@ -168,6 +176,7 @@ public class S3InitiateMultipartUploadRequestWithFSO
           .setObjectID(pathInfoFSO.getLeafNodeObjectId())
           .setUpdateID(transactionLogIndex)
           .setParentID(pathInfoFSO.getLastKnownParentId())
+          .setSchemaVersion(schemaVersion)
           .build();
 
       omKeyInfo = new OmKeyInfo.Builder()

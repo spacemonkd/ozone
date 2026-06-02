@@ -165,13 +165,13 @@ public class S3MultipartUploadAbortRequest extends OMKeyRequest {
             OMException.ResultCodes.NO_SUCH_MULTIPART_UPLOAD_ERROR);
       }
 
-      if (!ozoneManager.getVersionManager().isAllowed(OMLayoutFeature.MPU_PARTS_TABLE_SPLIT)
-          && multipartKeyInfo.getSchemaVersion() != 0) {
+      if (multipartKeyInfo.getSchemaVersion() != 0
+          && getOmRequest().getLayoutVersion().getVersion()
+              < OMLayoutFeature.MPU_PARTS_TABLE_SPLIT.layoutVersion()) {
         throw new OMException("MPU parts-table split behavior is not allowed " +
           "before cluster finalization.",
           OMException.ResultCodes.NOT_SUPPORTED_OPERATION_PRIOR_FINALIZATION);
       }
-
 
       multipartKeyInfo = multipartKeyInfo.toBuilder()
           .setUpdateID(trxnLogIndex)
