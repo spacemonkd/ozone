@@ -703,6 +703,18 @@ public final class OMConfigKeys {
       "ozone.om.ratis.events.max.limit";
   public static final int OZONE_OM_RATIS_EVENTS_MAX_LIMIT_DEFAULT = 100;
 
+  public static final String OZONE_OM_TRANSITION_BATCHER_THREAD_COUNT =
+      "ozone.om.transition.batcher.thread.count";
+  public static final int OZONE_OM_TRANSITION_BATCHER_THREAD_COUNT_DEFAULT = 5;
+
+  public static final String OZONE_OM_TRANSITION_BATCHER_MAX_BATCH_SIZE =
+      "ozone.om.transition.batcher.max.batch.size";
+  public static final int OZONE_OM_TRANSITION_BATCHER_MAX_BATCH_SIZE_DEFAULT = 100;
+
+  public static final String OZONE_OM_TRANSITION_BATCHER_FLUSH_INTERVAL_MS =
+      "ozone.om.transition.batcher.flush.interval.ms";
+  public static final long OZONE_OM_TRANSITION_BATCHER_FLUSH_INTERVAL_MS_DEFAULT = 5L;
+
   /**
    * Never constructed.
    */

@@ -44,9 +44,11 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Function;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 import org.apache.hadoop.hdds.utils.TransactionInfo;
 import org.apache.hadoop.hdds.utils.db.DBStore;
+import org.apache.hadoop.hdds.utils.db.StringCodec;
 import org.apache.hadoop.hdds.utils.db.Table;
 import org.apache.hadoop.ozone.OzoneConsts;
 import org.apache.hadoop.ozone.audit.AuditEventStatus;
@@ -61,8 +63,10 @@ import org.apache.hadoop.ozone.om.OmSnapshotManager;
 import org.apache.hadoop.ozone.om.OzoneManager;
 import org.apache.hadoop.ozone.om.OzoneManagerPrepareState;
 import org.apache.hadoop.ozone.om.exceptions.OMException;
+import org.apache.hadoop.ozone.om.execution.TransitionBuilder;
 import org.apache.hadoop.ozone.om.ha.OMServiceManager;
 import org.apache.hadoop.ozone.om.helpers.OMRatisHelper;
+import org.apache.hadoop.ozone.om.request.PlannedRequest;
 import org.apache.hadoop.ozone.om.lock.OMLockDetails;
 import org.apache.hadoop.ozone.om.ratis_snapshot.OmRatisSnapshotProvider;
 import org.apache.hadoop.ozone.om.response.OMClientResponse;
@@ -969,6 +973,156 @@ public class TestOzoneManagerStateMachine {
     verify(doubleBuffer).awaitFlush();
   }
 
+  // --- planned command routing tests ---
+
+  @Test
+  public void testStartTransactionPlannedCommand() throws Exception {
+    RaftGroupId groupId = initializeStateMachine();
+    OMRequest omRequest = sampleVolumeRequest();
+    RaftClientRequest clientRequest = buildClientRequest(groupId, omRequest);
+
+    sm.registerPlannedCommand(Type.CreateVolume, req -> new PlannedRequest(req) {
+      @Override
+      public void plan(OzoneManager om, TransitionBuilder builder) {
+        builder.setResponse(OMResponse.newBuilder()
+            .setCmdType(Type.CreateVolume)
+            .setStatus(Status.OK)
+            .setSuccess(true)
+            .build());
+      }
+    });
+
+    TransactionContext trx = sm.startTransaction(clientRequest);
+
+    assertNotNull(trx);
+    assertNull(trx.getException());
+    OMRequest plannedRequest = (OMRequest) trx.getStateMachineContext();
+    assertTrue(plannedRequest.hasBatchedStateTransitions());
+    assertEquals(1, plannedRequest.getBatchedStateTransitions().getTransitionsCount());
+    assertTrue(plannedRequest.getBatchedStateTransitions().getTransitions(0).getResponse().getSuccess());
+  }
+
+  @Test
+  public void testStartTransactionPlannedCommandFailure() throws Exception {
+    RaftGroupId groupId = initializeStateMachine();
+    OMRequest omRequest = sampleVolumeRequest();
+    RaftClientRequest clientRequest = buildClientRequest(groupId, omRequest);
+
+    sm.registerPlannedCommand(Type.CreateVolume, req -> new PlannedRequest(req) {
+      @Override
+      public void plan(OzoneManager om, TransitionBuilder builder) throws IOException {
+        throw new OMException("Volume exists", OMException.ResultCodes.VOLUME_ALREADY_EXISTS);
+      }
+    });
+
+    TransactionContext trx = sm.startTransaction(clientRequest);
+
+    assertNotNull(trx);
+    assertNull(trx.getException());
+    OMRequest plannedRequest = (OMRequest) trx.getStateMachineContext();
+    assertTrue(plannedRequest.hasBatchedStateTransitions());
+    assertFalse(plannedRequest.getBatchedStateTransitions().getTransitions(0).getResponse().getSuccess());
+    assertEquals(Status.VOLUME_ALREADY_EXISTS,
+        plannedRequest.getBatchedStateTransitions().getTransitions(0).getResponse().getStatus());
+  }
+
+  @Test
+  public void testApplyTransactionPlannedPath(@TempDir Path tmpDir) throws Exception {
+    OzoneConfiguration conf = new OzoneConfiguration();
+    conf.set(OMConfigKeys.OZONE_OM_DB_DIRS, tmpDir.toAbsolutePath().toString());
+    OzoneManager realishOm = mock(OzoneManager.class);
+    when(realishOm.getConfiguration()).thenReturn(conf);
+    when(realishOm.getConfig()).thenReturn(conf.getObject(OmConfig.class));
+    OMMetadataManager realMetaMgr = new OmMetadataManagerImpl(conf, realishOm);
+    when(realishOm.getMetadataManager()).thenReturn(realMetaMgr);
+    when(realishOm.getTransactionInfo()).thenReturn(mock(TransactionInfo.class));
+    when(realishOm.getOMServiceManager()).thenReturn(serviceManager);
+
+    ExecutorService testExecutor = Executors.newSingleThreadExecutor();
+    OzoneManagerStateMachine testSm = new OzoneManagerStateMachine(
+        realishOm, doubleBuffer, handler, testExecutor, null);
+    try {
+      testSm.registerPlannedCommand(Type.CreateVolume, req -> new PlannedRequest(req) {
+        @Override
+        public void plan(OzoneManager om, TransitionBuilder builder) throws IOException {
+          builder.put("metaTable", "testKey", "testValue", StringCodec.get());
+          builder.setResponse(OMResponse.newBuilder()
+              .setCmdType(Type.CreateVolume)
+              .setStatus(Status.OK)
+              .setSuccess(true)
+              .build());
+        }
+      });
+
+      OMRequest omRequest = sampleVolumeRequest();
+      RaftGroupId groupId = RaftGroupId.randomId();
+      RaftServer server = mock(RaftServer.class);
+      RaftStorage storage = mock(RaftStorage.class);
+      testSm.initialize(server, groupId, storage);
+
+      RaftClientRequest clientRequest = buildClientRequest(groupId, omRequest);
+      TransactionContext trx = testSm.startTransaction(clientRequest);
+      OMRequest planned = (OMRequest) trx.getStateMachineContext();
+
+      TransactionContext applyTrx = mockTrx(planned, 1, 1);
+      CompletableFuture<Message> future = testSm.applyTransaction(applyTrx);
+      Message result = future.get();
+
+      assertNotNull(result);
+      OMResponse response = OMRatisHelper.convertByteStringToOMResponse(result.getContent());
+      assertTrue(response.getSuccess());
+      assertEquals(Status.OK, response.getStatus());
+
+      // Verify data was written to RocksDB
+      assertEquals("testValue", realMetaMgr.getMetaTable().get("testKey"));
+    } finally {
+      testSm.stop();
+      testExecutor.shutdown();
+    }
+  }
+
+  @Test
+  public void testApplyTransactionLegacyPathUnchanged() throws Exception {
+    OMRequest request = sampleWriteRequest();
+    TransactionContext trx = mockTrx(request, 1, 5);
+
+    OMResponse expectedResponse = OMResponse.newBuilder()
+        .setCmdType(Type.CreateKey)
+        .setStatus(Status.OK)
+        .setSuccess(true)
+        .build();
+
+    OMClientResponse clientResponse = mock(OMClientResponse.class);
+    when(clientResponse.getOMResponse()).thenReturn(expectedResponse);
+    when(clientResponse.getOmLockDetails()).thenReturn(null);
+    when(handler.handleWriteRequest(eq(request), any(), eq(doubleBuffer)))
+        .thenReturn(clientResponse);
+
+    // Unregistered command goes through legacy path
+    assertFalse(request.hasBatchedStateTransitions());
+    CompletableFuture<Message> future = sm.applyTransaction(trx);
+    Message result = future.get();
+
+    assertNotNull(result);
+    verify(doubleBuffer).acquireUnFlushedTransactions(1);
+    verify(handler).handleWriteRequest(eq(request), any(), eq(doubleBuffer));
+  }
+
+  @Test
+  public void testRegisterPlannedCommand() {
+    assertNotNull(sm.getManagedIndexService());
+    assertNotNull(sm.getLeaderPlanner());
+    assertNotNull(sm.getApplyEngine());
+
+    Function<OMRequest, PlannedRequest> creator = req -> new PlannedRequest(req) {
+      @Override
+      public void plan(OzoneManager om, TransitionBuilder builder) {
+      }
+    };
+    sm.registerPlannedCommand(Type.CreateVolume, creator);
+    sm.registerPlannedCommand(Type.DeleteVolume, creator);
+  }
+
   // --- private helpers ---
 
   private static void assertTermIndex(long expectedTerm, long expectedIndex, TermIndex computed) {
@@ -989,6 +1143,19 @@ public class TestOzoneManagerStateMachine {
             .setUserName("user")
             .setHostName("localhost")
             .setRemoteAddress("127.0.0.1"))
+        .build();
+  }
+
+  private OMRequest sampleVolumeRequest() {
+    return OMRequest.newBuilder()
+        .setCmdType(Type.CreateVolume)
+        .setClientId("test-client")
+        .setCreateVolumeRequest(
+            OzoneManagerProtocolProtos.CreateVolumeRequest.newBuilder()
+                .setVolumeInfo(OzoneManagerProtocolProtos.VolumeInfo.newBuilder()
+                    .setVolume("vol1")
+                    .setAdminName("admin")
+                    .setOwnerName("owner")))
         .build();
   }
 

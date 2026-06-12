@@ -127,6 +127,7 @@ public final class OzoneManagerRatisServer {
   private final OzoneManagerStateMachine omStateMachine;
   private final String ratisStorageDir;
   private final OMPerformanceMetrics perfMetrics;
+  private final org.apache.hadoop.ozone.om.execution.TransitionBatcher transitionBatcher;
 
   private final ClientId clientId = ClientId.randomId();
   private static final AtomicLong CALL_ID_COUNTER = new AtomicLong();
@@ -177,6 +178,7 @@ public final class OzoneManagerRatisServer {
           raftGroupIdStr, raftPeersStr.substring(2));
     }
     this.omStateMachine = getStateMachine(conf);
+    registerPlannedCommands();
 
     this.readOption = RaftServerConfigKeys.Read.option(serverProperties);
 
@@ -197,6 +199,18 @@ public final class OzoneManagerRatisServer {
       }
     });
     this.perfMetrics = om.getPerfMetrics();
+
+    int batcherThreadCount = conf.getInt(
+        OMConfigKeys.OZONE_OM_TRANSITION_BATCHER_THREAD_COUNT,
+        OMConfigKeys.OZONE_OM_TRANSITION_BATCHER_THREAD_COUNT_DEFAULT);
+    int maxBatchSize = conf.getInt(
+        OMConfigKeys.OZONE_OM_TRANSITION_BATCHER_MAX_BATCH_SIZE,
+        OMConfigKeys.OZONE_OM_TRANSITION_BATCHER_MAX_BATCH_SIZE_DEFAULT);
+    long flushIntervalMs = conf.getLong(
+        OMConfigKeys.OZONE_OM_TRANSITION_BATCHER_FLUSH_INTERVAL_MS,
+        OMConfigKeys.OZONE_OM_TRANSITION_BATCHER_FLUSH_INTERVAL_MS_DEFAULT);
+    this.transitionBatcher = new org.apache.hadoop.ozone.om.execution.TransitionBatcher(
+        this::submitBatchToRatis, batcherThreadCount, maxBatchSize, flushIntervalMs);
   }
 
   /**
@@ -706,6 +720,85 @@ public final class OzoneManagerRatisServer {
         TracingUtil.isTracingEnabled(conf));
   }
 
+  private void registerPlannedCommands() {
+    omStateMachine.registerPlannedCommand(
+        OzoneManagerProtocolProtos.Type.CreateVolume,
+        org.apache.hadoop.ozone.om.request.volume.CreateVolumePlannedRequest::new);
+    omStateMachine.registerPlannedCommand(
+        OzoneManagerProtocolProtos.Type.CreateKey,
+        org.apache.hadoop.ozone.om.request.key.OBSCreateKeyPlannedRequest::new);
+    omStateMachine.registerPlannedCommand(
+        OzoneManagerProtocolProtos.Type.CommitKey,
+        org.apache.hadoop.ozone.om.request.key.OBSCommitKeyPlannedRequest::new);
+  }
+
+  /**
+   * Submits a planned request through the batching pipeline.
+   * The request is planned on the calling thread, then the resulting
+   * transition is queued for batched Ratis submission.
+   *
+   * @return future that completes with the OMResponse once committed
+   */
+  public java.util.concurrent.CompletableFuture<OMResponse> submitPlannedRequest(
+      OMRequest omRequest) {
+    org.apache.hadoop.ozone.om.request.PlannedRequest plannedRequest =
+        omStateMachine.createPlannedRequest(omRequest);
+    OzoneManagerProtocolProtos.ReplicatedStateTransition transition =
+        omStateMachine.getLeaderPlanner().plan(plannedRequest);
+    return transitionBatcher.submit(transition);
+  }
+
+  /**
+   * Returns true if the given command type is registered for the planned execution path.
+   */
+  public boolean isPlannedCommand(OzoneManagerProtocolProtos.Type type) {
+    return omStateMachine.isPlannedCommandPublic(type);
+  }
+
+  private void submitBatchToRatis(
+      OzoneManagerProtocolProtos.BatchedStateTransitions batched,
+      java.util.List<org.apache.hadoop.ozone.om.execution.TransitionBatcher.PendingTransition> pending) {
+    OMRequest batchRequest = OMRequest.newBuilder()
+        .setClientId(java.util.UUID.randomUUID().toString())
+        .setCmdType(OzoneManagerProtocolProtos.Type.CommitKey)
+        .setBatchedStateTransitions(batched)
+        .build();
+
+    try {
+      RaftClientRequest raftRequest = RaftClientRequest.newBuilder()
+          .setClientId(clientId)
+          .setServerId(server.getId())
+          .setGroupId(raftGroupId)
+          .setCallId(nextCallId())
+          .setMessage(Message.valueOf(OMRatisHelper.convertRequestToByteString(batchRequest)))
+          .setType(RaftClientRequest.writeRequestType())
+          .build();
+      RaftClientReply reply = server.submitClientRequestAsync(raftRequest).get();
+
+      if (reply.isSuccess()) {
+        for (int i = 0; i < pending.size(); i++) {
+          OzoneManagerProtocolProtos.ReplicatedStateTransition t = batched.getTransitions(i);
+          pending.get(i).getFuture().complete(t.getResponse());
+        }
+      } else {
+        Exception ex = reply.getException() != null
+            ? reply.getException()
+            : new IOException("Ratis batch submission failed: " + reply);
+        for (org.apache.hadoop.ozone.om.execution.TransitionBatcher.PendingTransition pt : pending) {
+          pt.getFuture().completeExceptionally(ex);
+        }
+      }
+    } catch (Exception e) {
+      for (org.apache.hadoop.ozone.om.execution.TransitionBatcher.PendingTransition pt : pending) {
+        pt.getFuture().completeExceptionally(e);
+      }
+    }
+  }
+
+  public org.apache.hadoop.ozone.om.execution.TransitionBatcher getTransitionBatcher() {
+    return transitionBatcher;
+  }
+
   @VisibleForTesting
   public OzoneManagerStateMachine getOmStateMachine() {
     return omStateMachine;
@@ -727,6 +820,7 @@ public final class OzoneManagerRatisServer {
 
   public void stop() {
     LOG.info("Stopping {} at port {}", this, port);
+    transitionBatcher.shutdown();
     try {
       // Ratis will also close the state machine
       server.close();

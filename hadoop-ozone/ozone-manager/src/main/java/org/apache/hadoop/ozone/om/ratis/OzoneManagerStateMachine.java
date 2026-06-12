@@ -27,6 +27,7 @@ import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,6 +37,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import org.apache.hadoop.hdds.utils.NettyMetrics;
 import org.apache.hadoop.hdds.utils.TransactionInfo;
 import org.apache.hadoop.ozone.audit.AuditLogger;
@@ -46,15 +48,21 @@ import org.apache.hadoop.ozone.om.OMMetrics;
 import org.apache.hadoop.ozone.om.OzoneManager;
 import org.apache.hadoop.ozone.om.OzoneManagerPrepareState;
 import org.apache.hadoop.ozone.om.exceptions.OMException;
+import org.apache.hadoop.ozone.om.execution.LeaderPlanner;
+import org.apache.hadoop.ozone.om.execution.ManagedIndexService;
 import org.apache.hadoop.ozone.om.execution.flowcontrol.ExecutionContext;
+import org.apache.hadoop.ozone.om.request.PlannedRequest;
 import org.apache.hadoop.ozone.om.helpers.OMRatisHelper;
 import org.apache.hadoop.ozone.om.lock.OMLockDetails;
 import org.apache.hadoop.ozone.om.ratis.utils.OzoneManagerRatisUtils;
 import org.apache.hadoop.ozone.om.response.DummyOMClientResponse;
 import org.apache.hadoop.ozone.om.response.OMClientResponse;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos;
+import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.BatchedStateTransitions;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.OMRequest;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.OMResponse;
+import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.ReplicatedStateTransition;
+import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.Type;
 import org.apache.hadoop.ozone.protocolPB.OzoneManagerRequestHandler;
 import org.apache.hadoop.ozone.protocolPB.RequestHandler;
 import org.apache.hadoop.security.UserGroupInformation;
@@ -112,6 +120,11 @@ public class OzoneManagerStateMachine extends BaseStateMachine {
 
   private final NettyMetrics nettyMetrics;
 
+  private final ManagedIndexService managedIndexService;
+  private final LeaderPlanner leaderPlanner;
+  private final StateTransitionApplyEngine applyEngine;
+  private final Map<Type, Function<OMRequest, PlannedRequest>> plannedRequestCreators = new EnumMap<>(Type.class);
+
   public OzoneManagerStateMachine(OzoneManagerRatisServer ratisServer,
       boolean isTracingEnabled) throws IOException {
     this.isTracingEnabled = isTracingEnabled;
@@ -133,6 +146,10 @@ public class OzoneManagerStateMachine extends BaseStateMachine {
     this.installSnapshotExecutor =
         HadoopExecutors.newSingleThreadExecutor(installSnapshotThreadFactory);
     this.nettyMetrics = NettyMetrics.create();
+
+    this.managedIndexService = ManagedIndexService.recover(ozoneManager.getMetadataManager());
+    this.leaderPlanner = new LeaderPlanner(ozoneManager, managedIndexService);
+    this.applyEngine = new StateTransitionApplyEngine(ozoneManager.getMetadataManager(), managedIndexService);
   }
 
   @VisibleForTesting
@@ -152,6 +169,9 @@ public class OzoneManagerStateMachine extends BaseStateMachine {
     this.installSnapshotExecutor =
         HadoopExecutors.newSingleThreadExecutor(installSnapshotThreadFactory);
     this.nettyMetrics = nettyMetrics;
+    this.managedIndexService = new ManagedIndexService(0);
+    this.leaderPlanner = new LeaderPlanner(ozoneManager, managedIndexService);
+    this.applyEngine = new StateTransitionApplyEngine(ozoneManager.getMetadataManager(), managedIndexService);
   }
 
   /**
@@ -188,6 +208,7 @@ public class OzoneManagerStateMachine extends BaseStateMachine {
 
   @Override
   public void notifyLeaderReady() {
+    managedIndexService.onBecomeLeader(getLastAppliedTermIndex().getIndex());
     ozoneManager.getOmSnapshotManager().resetInFlightSnapshotCount();
     OMMetrics metrics = ozoneManager.getMetrics();
     if (metrics != null) {
@@ -373,6 +394,11 @@ public class OzoneManagerStateMachine extends BaseStateMachine {
 
     Preconditions.checkArgument(raftClientRequest.getRaftGroupId().equals(
         getGroupId()));
+
+    if (omRequest.hasBatchedStateTransitions()) {
+      return startPrePlannedTransaction(raftClientRequest, omRequest);
+    }
+
     try {
       handler.validateRequest(omRequest);
     } catch (IOException ioe) {
@@ -385,11 +411,50 @@ public class OzoneManagerStateMachine extends BaseStateMachine {
       return ctxt;
     }
 
+    if (isPlannedCommand(omRequest.getCmdType())) {
+      return startPlannedTransaction(raftClientRequest, omRequest);
+    }
+
     return TransactionContext.newBuilder()
         .setClientRequest(raftClientRequest)
         .setStateMachine(this)
         .setServerRole(RaftProtos.RaftPeerRole.LEADER)
         .setLogData(raftClientRequest.getMessage().getContent())
+        .setStateMachineContext(omRequest)
+        .build();
+  }
+
+  private TransactionContext startPlannedTransaction(
+      RaftClientRequest raftClientRequest, OMRequest omRequest) {
+    Function<OMRequest, PlannedRequest> creator = plannedRequestCreators.get(omRequest.getCmdType());
+    PlannedRequest plannedRequest = creator.apply(omRequest);
+    ReplicatedStateTransition transition = leaderPlanner.plan(plannedRequest);
+
+    BatchedStateTransitions batched = BatchedStateTransitions.newBuilder()
+        .addTransitions(transition)
+        .build();
+    OMRequest plannedOmRequest = omRequest.toBuilder()
+        .setBatchedStateTransitions(batched)
+        .build();
+    ByteString logData = OMRatisHelper.convertRequestToByteString(plannedOmRequest);
+
+    return TransactionContext.newBuilder()
+        .setClientRequest(raftClientRequest)
+        .setStateMachine(this)
+        .setServerRole(RaftProtos.RaftPeerRole.LEADER)
+        .setLogData(logData)
+        .setStateMachineContext(plannedOmRequest)
+        .build();
+  }
+
+  private TransactionContext startPrePlannedTransaction(
+      RaftClientRequest raftClientRequest, OMRequest omRequest) {
+    ByteString logData = OMRatisHelper.convertRequestToByteString(omRequest);
+    return TransactionContext.newBuilder()
+        .setClientRequest(raftClientRequest)
+        .setStateMachine(this)
+        .setServerRole(RaftProtos.RaftPeerRole.LEADER)
+        .setLogData(logData)
         .setStateMachineContext(omRequest)
         .build();
   }
@@ -454,27 +519,38 @@ public class OzoneManagerStateMachine extends BaseStateMachine {
           trx.getStateMachineLogEntry().getLogData());
       final TermIndex termIndex = TermIndex.valueOf(trx.getLogEntry());
       LOG.debug("{}: applyTransaction {}", getId(), termIndex);
-      // In the current approach we have one single global thread executor.
+
+      if (request.hasBatchedStateTransitions()) {
+        return CompletableFuture.supplyAsync(
+            () -> applyPlannedTransition(request.getBatchedStateTransitions(), termIndex), executorService)
+            .thenApply(this::processResponse);
+      }
+
+      // Legacy path: re-execute business logic via double buffer.
+      // In the current approach we have one single global thread executor
       // with single thread. Right now this is being done for correctness, as
       // applyTransaction will be run on multiple OM's we want to execute the
       // transactions in the same order on all OM's, otherwise there is a
       // chance that OM replica's can be out of sync.
-      // TODO: In this way we are making all applyTransactions in
-      // OM serial order. Revisit this in future to use multiple executors for
-      // volume/bucket.
-
-      // Reason for not immediately implementing executor per volume is, if
-      // one executor operations are slow, we cannot update the
-      // lastAppliedIndex in OzoneManager StateMachine, even if other
-      // executor has completed the transactions with id more.
-
-      //if there are too many pending requests, wait for doubleBuffer flushing
       ozoneManagerDoubleBuffer.acquireUnFlushedTransactions(1);
 
       return CompletableFuture.supplyAsync(() -> runCommand(request, termIndex), executorService)
           .thenApply(this::processResponse);
     } catch (Exception e) {
       return completeExceptionally(e);
+    }
+  }
+
+  private OMResponse applyPlannedTransition(BatchedStateTransitions batched, TermIndex termIndex) {
+    try {
+      applyEngine.applyBatch(batched, termIndex);
+      updateLastAppliedTermIndex(termIndex);
+      ReplicatedStateTransition last = batched.getTransitions(batched.getTransitionsCount() - 1);
+      return last.getResponse();
+    } catch (IOException e) {
+      String errorMessage = "Failed to apply planned transition at " + termIndex + ": " + e.getMessage();
+      ExitUtils.terminate(1, errorMessage, e, LOG);
+      return null;
     }
   }
 
@@ -770,5 +846,46 @@ public class OzoneManagerStateMachine extends BaseStateMachine {
   @VisibleForTesting
   public OzoneManagerDoubleBuffer getOzoneManagerDoubleBuffer() {
     return ozoneManagerDoubleBuffer;
+  }
+
+  /**
+   * Registers a command type for the leader-planned execution path.
+   * Once registered, requests of this type are planned on the leader
+   * and applied as raw DB patches on all nodes.
+   */
+  public void registerPlannedCommand(Type type, Function<OMRequest, PlannedRequest> creator) {
+    plannedRequestCreators.put(type, creator);
+    LOG.info("Registered planned command: {}", type);
+  }
+
+  private boolean isPlannedCommand(Type type) {
+    return plannedRequestCreators.containsKey(type);
+  }
+
+  public boolean isPlannedCommandPublic(Type type) {
+    return plannedRequestCreators.containsKey(type);
+  }
+
+  public PlannedRequest createPlannedRequest(OMRequest omRequest) {
+    Function<OMRequest, PlannedRequest> creator = plannedRequestCreators.get(omRequest.getCmdType());
+    if (creator == null) {
+      throw new IllegalArgumentException("No planned request creator for " + omRequest.getCmdType());
+    }
+    return creator.apply(omRequest);
+  }
+
+  @VisibleForTesting
+  public ManagedIndexService getManagedIndexService() {
+    return managedIndexService;
+  }
+
+  @VisibleForTesting
+  public LeaderPlanner getLeaderPlanner() {
+    return leaderPlanner;
+  }
+
+  @VisibleForTesting
+  public StateTransitionApplyEngine getApplyEngine() {
+    return applyEngine;
   }
 }

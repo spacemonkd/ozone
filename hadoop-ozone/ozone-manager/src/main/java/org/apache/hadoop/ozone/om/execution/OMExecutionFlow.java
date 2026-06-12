@@ -21,6 +21,8 @@ import static org.apache.hadoop.ozone.util.MetricUtil.captureLatencyNs;
 
 import com.google.protobuf.ServiceException;
 import java.io.IOException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import org.apache.hadoop.ozone.om.OMPerformanceMetrics;
 import org.apache.hadoop.ozone.om.OzoneManager;
 import org.apache.hadoop.ozone.om.helpers.OMAuditLogger;
@@ -44,14 +46,34 @@ public class OMExecutionFlow {
 
   /**
    * External request handling.
-   * 
+   *
    * @param omRequest the request
    * @return OMResponse the response of execution
    * @throws ServiceException the exception on execution
    */
   public OMResponse submit(OMRequest omRequest, boolean isWrite) throws ServiceException {
-    // TODO: currently have only execution after ratis submission, but with new flow can have switch later
+    if (isWrite && ozoneManager.getOmRatisServer() != null
+        && ozoneManager.getOmRatisServer().isPlannedCommand(omRequest.getCmdType())) {
+      return submitPlannedRequest(omRequest);
+    }
     return submitExecutionToRatis(omRequest, isWrite);
+  }
+
+  private OMResponse submitPlannedRequest(OMRequest omRequest) throws ServiceException {
+    try {
+      CompletableFuture<OMResponse> future =
+          ozoneManager.getOmRatisServer().submitPlannedRequest(omRequest);
+      return future.get();
+    } catch (ExecutionException e) {
+      Throwable cause = e.getCause();
+      if (cause instanceof IOException) {
+        return OzoneManagerRatisUtils.createErrorResponse(omRequest, (IOException) cause);
+      }
+      throw new ServiceException("Planned request failed", cause != null ? cause : e);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new ServiceException("Planned request interrupted", e);
+    }
   }
 
   private OMResponse submitExecutionToRatis(OMRequest request, boolean isWrite) throws ServiceException {

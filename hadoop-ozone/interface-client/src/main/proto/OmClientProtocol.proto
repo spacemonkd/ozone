@@ -321,6 +321,8 @@ message OMRequest {
   optional GetBucketTaggingRequest          getBucketTaggingRequest          = 146;
   // TODO: DeleteBucketTagging — clears tags on target bucket (link resolves in OM).
   optional DeleteBucketTaggingRequest       deleteBucketTaggingRequest       = 147;
+
+  optional BatchedStateTransitions          batchedStateTransitions          = 200;
 }
 
 message OMResponse {
@@ -2528,4 +2530,27 @@ message DeleteBucketTaggingRequest {
 
 // TODO: Success response; bucket has no tags after commit.
 message DeleteBucketTaggingResponse {
+}
+
+enum DeltaType {
+  PUT = 1;
+  DELETE = 2;
+}
+
+message DBDelta {
+  required string tableName = 1;
+  required bytes key = 2;
+  optional bytes value = 3;
+  required DeltaType type = 4;
+}
+
+message ReplicatedStateTransition {
+  required int64 managedIndex = 1;
+  repeated DBDelta deltas = 2;
+  required OMResponse response = 3;
+  required Type cmdType = 4;
+}
+
+message BatchedStateTransitions {
+  repeated ReplicatedStateTransition transitions = 1;
 }
