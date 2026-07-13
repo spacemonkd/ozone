@@ -39,7 +39,7 @@
     <aspectj.java25.version>1.9.25.1</aspectj.java25.version>
     <aspectj.java8.version>1.9.7</aspectj.java8.version>
     <assertj.version>3.27.7</assertj.version>
-    <aws-java-sdk.version>1.12.788</aws-java-sdk.version>
+    <aws-java-sdk.version>1.12.797</aws-java-sdk.version>
     <bonecp.version>0.8.0.RELEASE</bonecp.version>
     <bouncycastle.version>1.84</bouncycastle.version>
     <build-helper-maven-plugin.version>3.6.1</build-helper-maven-plugin.version>
