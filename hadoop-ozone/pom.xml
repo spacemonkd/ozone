@@ -45,6 +45,8 @@
     <module>interface-storage</module>
     <module>mini-cluster</module>
     <module>multitenancy-ranger</module>
+    <module>ozone-custos</module>
+    <module>ozone-custos-common</module>
     <module>ozone-manager</module>
     <module>ozonefs</module>
     <module>ozonefs-common</module>
