@@ -15,28 +15,11 @@
  * limitations under the License.
  */
 
-package org.apache.hadoop.ozone.custos.server;
-
-import org.apache.hadoop.ozone.custos.CredentialType;
-import org.apache.hadoop.ozone.custos.CustosCredential;
-import org.apache.hadoop.ozone.custos.CustosException;
-import org.apache.hadoop.ozone.custos.CustosProvider;
-
 /**
- * Test-only second {@link CustosProvider} that also claims
- * {@link CredentialType#OIDC_JWT}, to verify the registry rejects two providers
- * mapping to the same credential type.
+ * Identity resolution backends for Custos: map an authenticated subject to the
+ * {@link org.apache.hadoop.ozone.custos.CustosIdentity} bound to a
+ * {@link org.apache.hadoop.ozone.custos.proto.CustosTokenProtos.CustosTokenProto}.
+ * OIDC, LDAP, Kerberos, and local group-mapping providers extend
+ * {@link org.apache.hadoop.ozone.custos.identity.AbstractIdentityProvider}.
  */
-public class StubDuplicateOidcProvider implements CustosProvider {
-
-  @Override
-  public CredentialType supportedType() {
-    return CredentialType.OIDC_JWT;
-  }
-
-  @Override
-  public String validateSubject(CustosCredential credential)
-      throws CustosException {
-    throw new CustosException("stub-duplicate: should never be called");
-  }
-}
+package org.apache.hadoop.ozone.custos.identity;

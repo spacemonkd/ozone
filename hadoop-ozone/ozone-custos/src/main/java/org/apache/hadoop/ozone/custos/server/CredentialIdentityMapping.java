@@ -18,25 +18,30 @@
 package org.apache.hadoop.ozone.custos.server;
 
 import org.apache.hadoop.ozone.custos.CredentialType;
-import org.apache.hadoop.ozone.custos.CustosCredential;
 import org.apache.hadoop.ozone.custos.CustosException;
-import org.apache.hadoop.ozone.custos.CustosProvider;
+import org.apache.hadoop.ozone.custos.identity.IdentityProviderType;
 
 /**
- * Test-only second {@link CustosProvider} that also claims
- * {@link CredentialType#OIDC_JWT}, to verify the registry rejects two providers
- * mapping to the same credential type.
+ * Maps a validated {@link CredentialType} to the {@link IdentityProviderType}
+ * that resolves the subject into a full identity for token binding.
  */
-public class StubDuplicateOidcProvider implements CustosProvider {
+public final class CredentialIdentityMapping {
 
-  @Override
-  public CredentialType supportedType() {
-    return CredentialType.OIDC_JWT;
+  private CredentialIdentityMapping() {
   }
 
-  @Override
-  public String validateSubject(CustosCredential credential)
+  public static IdentityProviderType forCredential(CredentialType credentialType)
       throws CustosException {
-    throw new CustosException("stub-duplicate: should never be called");
+    switch (credentialType) {
+    case SPNEGO:
+      return IdentityProviderType.KERBEROS;
+    case OIDC_JWT:
+      return IdentityProviderType.OIDC;
+    case S3_SIGV4:
+    case DELEGATION_TOKEN:
+    default:
+      throw new CustosException("No identity provider mapping for credential"
+          + " type " + credentialType + ".");
+    }
   }
 }

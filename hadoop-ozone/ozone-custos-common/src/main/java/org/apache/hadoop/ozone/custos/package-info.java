@@ -19,8 +19,8 @@
  * Shared Custos auth-service types: the provider plugin SPI
  * ({@link org.apache.hadoop.ozone.custos.CustosProvider}), the single
  * credential input ({@link org.apache.hadoop.ozone.custos.CustosCredential}),
- * and the verified-identity model
- * ({@link org.apache.hadoop.ozone.custos.CustosIdentity}). Depended on by both
- * the Custos service and OM.
+ * the verified-identity model ({@link org.apache.hadoop.ozone.custos.CustosIdentity}),
+ * and identity backends ({@link org.apache.hadoop.ozone.custos.identity.IdentityProvider}).
+ * Depended on by both the Custos service and OM.
  */
 package org.apache.hadoop.ozone.custos;

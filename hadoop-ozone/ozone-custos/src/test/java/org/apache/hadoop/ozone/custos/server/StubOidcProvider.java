@@ -20,7 +20,6 @@ package org.apache.hadoop.ozone.custos.server;
 import org.apache.hadoop.ozone.custos.CredentialType;
 import org.apache.hadoop.ozone.custos.CustosCredential;
 import org.apache.hadoop.ozone.custos.CustosException;
-import org.apache.hadoop.ozone.custos.CustosIdentity;
 import org.apache.hadoop.ozone.custos.CustosProvider;
 
 /**
@@ -35,15 +34,12 @@ public class StubOidcProvider implements CustosProvider {
   }
 
   @Override
-  public CustosIdentity authenticate(CustosCredential credential)
+  public String validateSubject(CustosCredential credential)
       throws CustosException {
     String subject = credential.getAttribute("subject");
     if (subject == null) {
       throw new CustosException("stub-oidc: missing subject");
     }
-    return CustosIdentity.newBuilder()
-        .setSubject(subject)
-        .setAuthMethod("stub-oidc")
-        .build();
+    return subject;
   }
 }

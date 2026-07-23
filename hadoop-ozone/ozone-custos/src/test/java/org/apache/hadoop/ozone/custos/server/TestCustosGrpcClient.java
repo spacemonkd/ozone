@@ -17,27 +17,27 @@
 
 package org.apache.hadoop.ozone.custos.server;
 
+import static org.apache.hadoop.ozone.custos.server.CustosConfig.Keys.GRPC_BIND_HOST;
+import static org.apache.hadoop.ozone.custos.server.CustosConfig.Keys.GRPC_BIND_PORT;
 import static org.apache.hadoop.ozone.custos.server.CustosConfig.Keys.HTTP_BIND_HOST;
 import static org.apache.hadoop.ozone.custos.server.CustosConfig.Keys.HTTP_BIND_PORT;
+import static org.apache.hadoop.ozone.custos.server.CustosConfig.Keys.IDENTITY_PROVIDERS;
 import static org.apache.hadoop.ozone.custos.server.CustosConfig.Keys.PROVIDERS;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 import org.apache.hadoop.ozone.custos.CredentialType;
+import org.apache.hadoop.ozone.custos.CustosCredential;
+import org.apache.hadoop.ozone.custos.client.CustosGrpcClient;
+import org.apache.hadoop.ozone.custos.identity.IdentityProviderType;
+import org.apache.hadoop.ozone.custos.proto.CustosTokenProtos.CustosTokenProto;
+import org.apache.hadoop.ozone.custos.server.identity.OidcIdentityProvider;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
-/**
- * Boots the Custos service on an ephemeral port and checks it is reachable and
- * healthy, and that it loads the configured providers.
- */
-class TestCustos {
+class TestCustosGrpcClient {
 
   private final Custos custos = new Custos();
 
@@ -50,39 +50,33 @@ class TestCustos {
     OzoneConfiguration conf = new OzoneConfiguration();
     conf.set(HTTP_BIND_HOST, "127.0.0.1");
     conf.setInt(HTTP_BIND_PORT, 0);
+    conf.set(GRPC_BIND_HOST, "127.0.0.1");
+    conf.setInt(GRPC_BIND_PORT, 0);
     return conf;
   }
 
   @Test
-  void bootsAndAnswersHealthCheck() throws Exception {
-    custos.start(newConf());
-
-    InetSocketAddress address = custos.getHttpAddress();
-    assertThat(address).isNotNull();
-    assertThat(address.getPort()).isPositive();
-
-    URL url = new URL("http", address.getHostString(), address.getPort(),
-        "/health");
-    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-    conn.setRequestMethod("GET");
-    try {
-      assertThat(conn.getResponseCode()).isEqualTo(200);
-      try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-          conn.getInputStream(), StandardCharsets.UTF_8))) {
-        assertThat(reader.readLine()).isEqualTo("OK");
-      }
-    } finally {
-      conn.disconnect();
-    }
-  }
-
-  @Test
-  void loadsConfiguredProvidersOnBoot() throws Exception {
+  void getSessionTokenOverGrpc() throws Exception {
     OzoneConfiguration conf = newConf();
     conf.set(PROVIDERS, StubOidcProvider.class.getName());
+    conf.set(IDENTITY_PROVIDERS, OidcIdentityProvider.class.getName());
     custos.start(conf);
 
-    assertThat(custos.getProviderRegistry().supportedTypes())
-        .containsExactly(CredentialType.OIDC_JWT);
+    InetSocketAddress grpcAddress = custos.getGrpcAddress();
+    assertThat(grpcAddress).isNotNull();
+    assertThat(grpcAddress.getPort()).isPositive();
+
+    CustosCredential credential = new CustosCredential(CredentialType.OIDC_JWT,
+        new byte[] {1, 2, 3},
+        Collections.singletonMap("subject", "alice"));
+
+    try (CustosGrpcClient client = new CustosGrpcClient(
+        grpcAddress.getHostString(), grpcAddress.getPort(), 10_000L)) {
+      CustosTokenProto token = client.getSessionToken(credential, "om1", 60_000L);
+      assertThat(token.getSubject()).isEqualTo("alice");
+      assertThat(token.getAuthProvider()).isEqualTo(IdentityProviderType.OIDC.name());
+      assertThat(token.getAudience()).isEqualTo("om1");
+      assertThat(token.getExpiryMs()).isPositive();
+    }
   }
 }

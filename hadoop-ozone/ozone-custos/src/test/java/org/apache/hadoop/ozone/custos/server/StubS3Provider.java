@@ -20,7 +20,6 @@ package org.apache.hadoop.ozone.custos.server;
 import org.apache.hadoop.ozone.custos.CredentialType;
 import org.apache.hadoop.ozone.custos.CustosCredential;
 import org.apache.hadoop.ozone.custos.CustosException;
-import org.apache.hadoop.ozone.custos.CustosIdentity;
 import org.apache.hadoop.ozone.custos.CustosProvider;
 
 /**
@@ -35,15 +34,12 @@ public class StubS3Provider implements CustosProvider {
   }
 
   @Override
-  public CustosIdentity authenticate(CustosCredential credential)
+  public String validateSubject(CustosCredential credential)
       throws CustosException {
     String accessId = credential.getAttribute("accessId");
     if (accessId == null) {
       throw new CustosException("stub-s3: missing accessId");
     }
-    return CustosIdentity.newBuilder()
-        .setSubject(accessId)
-        .setAuthMethod("stub-s3")
-        .build();
+    return accessId;
   }
 }

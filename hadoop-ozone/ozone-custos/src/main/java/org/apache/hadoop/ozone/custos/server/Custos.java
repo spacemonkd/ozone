@@ -17,13 +17,6 @@
 
 package org.apache.hadoop.ozone.custos.server;
 
-import static org.apache.hadoop.ozone.custos.server.CustosConfigKeys.OZONE_CUSTOS_ENABLED;
-import static org.apache.hadoop.ozone.custos.server.CustosConfigKeys.OZONE_CUSTOS_ENABLED_DEFAULT;
-import static org.apache.hadoop.ozone.custos.server.CustosConfigKeys.OZONE_CUSTOS_HTTP_BIND_HOST;
-import static org.apache.hadoop.ozone.custos.server.CustosConfigKeys.OZONE_CUSTOS_HTTP_BIND_HOST_DEFAULT;
-import static org.apache.hadoop.ozone.custos.server.CustosConfigKeys.OZONE_CUSTOS_HTTP_BIND_PORT;
-import static org.apache.hadoop.ozone.custos.server.CustosConfigKeys.OZONE_CUSTOS_HTTP_BIND_PORT_DEFAULT;
-
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.concurrent.Callable;
@@ -38,11 +31,14 @@ import picocli.CommandLine.Command;
  * Entry point for the standalone Custos auth service.
  *
  * <p>Custos validates client credentials through pluggable
- * {@link org.apache.hadoop.ozone.custos.CustosProvider}s and (in later work)
- * issues signed tokens that OM verifies locally. This process boots, loads the
- * configured providers, and serves a health endpoint. Token-issuance gRPC
- * endpoints and TLS via SCM's {@code CertificateClient} are built on top of
- * this scaffolding.
+ * {@link org.apache.hadoop.ozone.custos.CustosProvider}s, resolves identity
+ * through {@link org.apache.hadoop.ozone.custos.identity.IdentityProvider}s, and
+ * issues session tokens via {@link CustosAuthService}. For Kerberos, the Ozone
+ * Java client mints a SPNEGO token via {@link org.apache.hadoop.ozone.custos.KerberosCredentials}
+ * and sends it to Custos; configure {@code ozone.custos.providers} (for example
+ * {@code KerberosProvider}), {@code ozone.custos.identity.providers} (for example
+ * {@code KerberosIdentityProvider}), and the server keytab
+ * {@code ozone.custos.kerberos.keytab}.
  */
 @Command(name = "ozone custos",
     hidden = true,
@@ -54,7 +50,10 @@ public class Custos extends GenericCli implements Callable<Void> {
   private static final Logger LOG = LoggerFactory.getLogger(Custos.class);
 
   private CustosProviderRegistry providerRegistry;
+  private IdentityProviderRegistry identityProviderRegistry;
+  private CustosAuthService authService;
   private CustosHttpServer httpServer;
+  private CustosGrpcServer grpcServer;
 
   public static void main(String[] args) {
     new Custos().run(args);
@@ -75,26 +74,36 @@ public class Custos extends GenericCli implements Callable<Void> {
   }
 
   public void start(OzoneConfiguration conf) throws IOException {
-    boolean enabled = conf.getBoolean(OZONE_CUSTOS_ENABLED,
-        OZONE_CUSTOS_ENABLED_DEFAULT);
+    CustosConfig config = conf.getObject(CustosConfig.class);
     LOG.info("Starting Ozone Custos auth service ({}={})",
-        OZONE_CUSTOS_ENABLED, enabled);
+        CustosConfig.Keys.ENABLED, config.isEnabled());
 
     providerRegistry = new CustosProviderRegistry(conf);
+    identityProviderRegistry = new IdentityProviderRegistry(conf);
+    authService = new CustosAuthService(providerRegistry, identityProviderRegistry);
 
-    String bindHost = conf.get(OZONE_CUSTOS_HTTP_BIND_HOST,
-        OZONE_CUSTOS_HTTP_BIND_HOST_DEFAULT);
-    int bindPort = conf.getInt(OZONE_CUSTOS_HTTP_BIND_PORT,
-        OZONE_CUSTOS_HTTP_BIND_PORT_DEFAULT);
-    httpServer = new CustosHttpServer(new InetSocketAddress(bindHost, bindPort));
+    httpServer = new CustosHttpServer(new InetSocketAddress(
+        config.getHttpBindHost(), config.getHttpBindPort()));
     httpServer.start();
 
-    LOG.info("Ozone Custos auth service started on {}",
-        httpServer.getListenAddress());
+    grpcServer = new CustosGrpcServer(new InetSocketAddress(
+        config.getGrpcBindHost(), config.getGrpcBindPort()), authService);
+    grpcServer.start();
+
+    LOG.info("Ozone Custos auth service started on {} (HTTP) and {} (gRPC)",
+        httpServer.getListenAddress(), grpcServer.getListenAddress());
   }
 
   public void stop() {
     LOG.info("Stopping Ozone Custos auth service");
+    if (grpcServer != null) {
+      try {
+        grpcServer.stop();
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        LOG.warn("Interrupted while stopping Custos gRPC server", e);
+      }
+    }
     if (httpServer != null) {
       httpServer.stop();
     }
@@ -104,7 +113,19 @@ public class Custos extends GenericCli implements Callable<Void> {
     return providerRegistry;
   }
 
+  public IdentityProviderRegistry getIdentityProviderRegistry() {
+    return identityProviderRegistry;
+  }
+
+  public CustosAuthService getAuthService() {
+    return authService;
+  }
+
   public InetSocketAddress getHttpAddress() {
     return httpServer == null ? null : httpServer.getListenAddress();
+  }
+
+  public InetSocketAddress getGrpcAddress() {
+    return grpcServer == null ? null : grpcServer.getListenAddress();
   }
 }

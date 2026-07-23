@@ -27,8 +27,9 @@ import java.util.Objects;
  *
  * <p>It carries the credential {@link CredentialType} and the raw credential
  * material (a bearer token, a SPNEGO token, or S3 SigV4 bytes). Structured
- * fields that do not fit a single byte array (for example an S3 access id or
- * string-to-sign) travel in {@link #getAttributes() attributes} so all
+ * fields that do not fit a single byte array (for example an S3 access id,
+ * string-to-sign, or the Custos service principal for SPNEGO) travel in
+ * {@link #getAttributes() attributes} so all providers can share one input and
  * providers can share one input and Custos can route purely on type.
  *
  * <p>Instances are immutable. The raw material must never be logged.

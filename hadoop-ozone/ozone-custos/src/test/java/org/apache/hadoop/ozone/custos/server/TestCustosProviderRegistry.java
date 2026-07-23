@@ -17,7 +17,7 @@
 
 package org.apache.hadoop.ozone.custos.server;
 
-import static org.apache.hadoop.ozone.custos.server.CustosConfigKeys.OZONE_CUSTOS_PROVIDERS;
+import static org.apache.hadoop.ozone.custos.server.CustosConfig.Keys.PROVIDERS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -26,7 +26,7 @@ import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 import org.apache.hadoop.ozone.custos.CredentialType;
 import org.apache.hadoop.ozone.custos.CustosCredential;
 import org.apache.hadoop.ozone.custos.CustosException;
-import org.apache.hadoop.ozone.custos.CustosIdentity;
+import org.apache.hadoop.ozone.custos.server.provider.KerberosProvider;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -44,7 +44,7 @@ class TestCustosProviderRegistry {
   @Test
   void routesEachCredentialTypeToItsProvider() throws CustosException {
     OzoneConfiguration conf = new OzoneConfiguration();
-    conf.set(OZONE_CUSTOS_PROVIDERS,
+    conf.set(PROVIDERS,
         StubOidcProvider.class.getName() + ","
             + StubS3Provider.class.getName());
     CustosProviderRegistry registry = new CustosProviderRegistry(conf);
@@ -53,15 +53,22 @@ class TestCustosProviderRegistry {
         .containsExactlyInAnyOrder(CredentialType.OIDC_JWT,
             CredentialType.S3_SIGV4);
 
-    CustosIdentity oidc = registry.authenticate(
-        credential(CredentialType.OIDC_JWT, "subject", "alice"));
-    assertThat(oidc.getSubject()).isEqualTo("alice");
-    assertThat(oidc.getAuthMethod()).isEqualTo("stub-oidc");
+    assertThat(registry.validateSubject(
+        credential(CredentialType.OIDC_JWT, "subject", "alice")))
+        .isEqualTo("alice");
 
-    CustosIdentity s3 = registry.authenticate(
-        credential(CredentialType.S3_SIGV4, "accessId", "AKIA123"));
-    assertThat(s3.getSubject()).isEqualTo("AKIA123");
-    assertThat(s3.getAuthMethod()).isEqualTo("stub-s3");
+    assertThat(registry.validateSubject(
+        credential(CredentialType.S3_SIGV4, "accessId", "AKIA123")))
+        .isEqualTo("AKIA123");
+  }
+
+  @Test
+  void loadsBundledKerberosProviderByClassName() {
+    OzoneConfiguration conf = new OzoneConfiguration();
+    conf.set(PROVIDERS, KerberosProvider.class.getName());
+    CustosProviderRegistry registry = new CustosProviderRegistry(conf);
+
+    assertThat(registry.supportedTypes()).containsExactly(CredentialType.SPNEGO);
   }
 
   @Test
@@ -74,10 +81,10 @@ class TestCustosProviderRegistry {
   @Test
   void unsupportedCredentialTypeIsRejected() {
     OzoneConfiguration conf = new OzoneConfiguration();
-    conf.set(OZONE_CUSTOS_PROVIDERS, StubOidcProvider.class.getName());
+    conf.set(PROVIDERS, StubOidcProvider.class.getName());
     CustosProviderRegistry registry = new CustosProviderRegistry(conf);
 
-    assertThatThrownBy(() -> registry.authenticate(
+    assertThatThrownBy(() -> registry.validateSubject(
         credential(CredentialType.SPNEGO, "subject", "bob")))
         .isInstanceOf(CustosException.class)
         .hasMessageContaining("SPNEGO");
@@ -86,7 +93,7 @@ class TestCustosProviderRegistry {
   @Test
   void unknownProviderClassFailsWithClearError() {
     OzoneConfiguration conf = new OzoneConfiguration();
-    conf.set(OZONE_CUSTOS_PROVIDERS, "org.apache.hadoop.ozone.custos.NoSuchProvider");
+    conf.set(PROVIDERS, "org.apache.hadoop.ozone.custos.NoSuchProvider");
 
     assertThatThrownBy(() -> new CustosProviderRegistry(conf))
         .isInstanceOf(IllegalArgumentException.class)
@@ -96,7 +103,7 @@ class TestCustosProviderRegistry {
   @Test
   void twoProvidersForSameTypeFailStartup() {
     OzoneConfiguration conf = new OzoneConfiguration();
-    conf.set(OZONE_CUSTOS_PROVIDERS,
+    conf.set(PROVIDERS,
         StubOidcProvider.class.getName() + ","
             + StubDuplicateOidcProvider.class.getName());
 

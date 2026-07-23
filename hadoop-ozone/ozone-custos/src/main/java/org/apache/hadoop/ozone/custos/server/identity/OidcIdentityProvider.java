@@ -15,28 +15,30 @@
  * limitations under the License.
  */
 
-package org.apache.hadoop.ozone.custos.server;
+package org.apache.hadoop.ozone.custos.server.identity;
 
-import org.apache.hadoop.ozone.custos.CredentialType;
-import org.apache.hadoop.ozone.custos.CustosCredential;
+import java.util.List;
 import org.apache.hadoop.ozone.custos.CustosException;
-import org.apache.hadoop.ozone.custos.CustosProvider;
+import org.apache.hadoop.ozone.custos.identity.AbstractIdentityProvider;
+import org.apache.hadoop.ozone.custos.identity.IdentityContext;
+import org.apache.hadoop.ozone.custos.identity.IdentityProviderType;
 
 /**
- * Test-only second {@link CustosProvider} that also claims
- * {@link CredentialType#OIDC_JWT}, to verify the registry rejects two providers
- * mapping to the same credential type.
+ * Resolves identity from OIDC token claims and userinfo. Groups and roles are
+ * taken from the {@link IdentityContext} claim fields populated during JWT
+ * validation; a future implementation may also call the OIDC userinfo endpoint.
  */
-public class StubDuplicateOidcProvider implements CustosProvider {
+public class OidcIdentityProvider extends AbstractIdentityProvider {
 
   @Override
-  public CredentialType supportedType() {
-    return CredentialType.OIDC_JWT;
+  public IdentityProviderType supportedType() {
+    return IdentityProviderType.OIDC;
   }
 
   @Override
-  public String validateSubject(CustosCredential credential)
+  protected List<String> resolveGroups(IdentityContext context)
       throws CustosException {
-    throw new CustosException("stub-duplicate: should never be called");
+    // Claim groups are set by the OIDC auth step; userinfo lookup is TODO.
+    return super.resolveGroups(context);
   }
 }

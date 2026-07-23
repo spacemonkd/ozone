@@ -15,28 +15,25 @@
  * limitations under the License.
  */
 
-package org.apache.hadoop.ozone.custos.server;
-
-import org.apache.hadoop.ozone.custos.CredentialType;
-import org.apache.hadoop.ozone.custos.CustosCredential;
-import org.apache.hadoop.ozone.custos.CustosException;
-import org.apache.hadoop.ozone.custos.CustosProvider;
+package org.apache.hadoop.ozone.custos.client;
 
 /**
- * Test-only second {@link CustosProvider} that also claims
- * {@link CredentialType#OIDC_JWT}, to verify the registry rejects two providers
- * mapping to the same credential type.
+ * Configuration keys for the Ozone Java client's Custos gRPC client.
+ *
+ * <p>Native Ozone clients continue to use Hadoop RPC for OM. Custos is reached
+ * over gRPC only for {@code GetSessionToken} / {@code RenewSessionToken}.
  */
-public class StubDuplicateOidcProvider implements CustosProvider {
+public final class CustosClientConfig {
 
-  @Override
-  public CredentialType supportedType() {
-    return CredentialType.OIDC_JWT;
-  }
+  public static final String ENABLED = "ozone.custos.enabled";
+  public static final String GRPC_HOST = "ozone.custos.grpc.host";
+  public static final String GRPC_PORT = "ozone.custos.grpc.port";
+  public static final String GRPC_DEADLINE_MS = "ozone.custos.grpc.deadline.ms";
 
-  @Override
-  public String validateSubject(CustosCredential credential)
-      throws CustosException {
-    throw new CustosException("stub-duplicate: should never be called");
+  public static final String GRPC_HOST_DEFAULT = "localhost";
+  public static final int GRPC_PORT_DEFAULT = 9894;
+  public static final long GRPC_DEADLINE_MS_DEFAULT = 30_000L;
+
+  private CustosClientConfig() {
   }
 }

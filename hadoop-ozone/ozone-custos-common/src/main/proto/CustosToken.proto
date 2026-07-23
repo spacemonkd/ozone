@@ -1,0 +1,99 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * These .proto interfaces are private and unstable.
+ * Please see http://wiki.apache.org/hadoop/Compatibility
+ * for what changes are allowed for a *unstable* .proto interface.
+ */
+
+syntax = "proto3";
+option java_package = "org.apache.hadoop.ozone.custos.proto";
+option java_outer_classname = "CustosTokenProtos";
+option java_generic_services = true;
+option java_generate_equals_and_hash = true;
+package hadoop.ozone.custos;
+
+/**
+ * The kind of credential a client presents to Custos. Mirrors
+ * org.apache.hadoop.ozone.custos.CredentialType.
+ */
+enum CredentialTypeProto {
+  CREDENTIAL_TYPE_UNKNOWN = 0;
+  OIDC_JWT = 1;
+  SPNEGO = 2;
+  S3_SIGV4 = 3;
+  DELEGATION_TOKEN = 4;
+}
+
+/**
+ * Backend that resolves a subject into the identity bound to a CustosToken.
+ * Mirrors org.apache.hadoop.ozone.custos.identity.IdentityProviderType.
+ */
+enum IdentityProviderTypeProto {
+  IDENTITY_PROVIDER_TYPE_UNKNOWN = 0;
+  OIDC = 1;
+  LDAP = 2;
+  KERBEROS = 3;
+  LOCAL = 4;
+}
+
+/**
+ * Input to an identity provider after credential authentication. Carries the
+ * authenticated subject and any claims the auth step already extracted.
+ */
+message IdentityContextProto {
+  IdentityProviderTypeProto providerType = 1;
+  string subject = 2;
+  repeated string claimGroups = 3;
+  repeated string claimRoles = 4;
+  string issuer = 5;
+  map<string, string> attributes = 6;
+}
+
+/**
+ * Wire representation of org.apache.hadoop.ozone.custos.CustosCredential.
+ */
+message CustosCredentialProto {
+  CredentialTypeProto type = 1;
+  bytes material = 2;
+  map<string, string> attributes = 3;
+}
+
+/**
+ * Signed proof of identity Custos issues after validating a credential.
+ * Carried on OMRequest.custosToken (field 150) and returned by
+ * CustosService.GetSessionToken / RenewSessionToken.
+ *
+ * Fields use proto3 optional so presence is tracked for signing input.
+ */
+message CustosTokenProto {
+  optional string subject = 1;
+  optional string authProvider = 2;
+  optional string issuer = 3;
+  optional string audience = 4;
+  optional uint64 expiryMs = 8;
+  optional string tokenId = 9;
+  optional bytes signature = 10;
+  repeated string groups = 15;
+  optional string signatureAlgorithm = 16;
+  optional string signingKeyId = 17;
+  optional uint64 issuedAtMs = 18;
+  optional uint64 maxLifetimeMs = 19;
+  optional bool multiUse = 20;
+}

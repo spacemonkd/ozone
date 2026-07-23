@@ -15,28 +15,10 @@
  * limitations under the License.
  */
 
-package org.apache.hadoop.ozone.custos.server;
-
-import org.apache.hadoop.ozone.custos.CredentialType;
-import org.apache.hadoop.ozone.custos.CustosCredential;
-import org.apache.hadoop.ozone.custos.CustosException;
-import org.apache.hadoop.ozone.custos.CustosProvider;
-
 /**
- * Test-only second {@link CustosProvider} that also claims
- * {@link CredentialType#OIDC_JWT}, to verify the registry rejects two providers
- * mapping to the same credential type.
+ * gRPC client for the Custos authentication service.
+ *
+ * <p>Native Ozone clients use Hadoop RPC for OM and this package only for the
+ * Custos token exchange.
  */
-public class StubDuplicateOidcProvider implements CustosProvider {
-
-  @Override
-  public CredentialType supportedType() {
-    return CredentialType.OIDC_JWT;
-  }
-
-  @Override
-  public String validateSubject(CustosCredential credential)
-      throws CustosException {
-    throw new CustosException("stub-duplicate: should never be called");
-  }
-}
+package org.apache.hadoop.ozone.custos.client;

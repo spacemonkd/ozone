@@ -17,7 +17,7 @@
 
 package org.apache.hadoop.ozone.custos.server;
 
-import static org.apache.hadoop.ozone.custos.server.CustosConfigKeys.OZONE_CUSTOS_PROVIDERS;
+import static org.apache.hadoop.ozone.custos.server.CustosConfig.Keys.PROVIDERS;
 
 import java.util.Collection;
 import java.util.EnumMap;
@@ -28,7 +28,6 @@ import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 import org.apache.hadoop.ozone.custos.CredentialType;
 import org.apache.hadoop.ozone.custos.CustosCredential;
 import org.apache.hadoop.ozone.custos.CustosException;
-import org.apache.hadoop.ozone.custos.CustosIdentity;
 import org.apache.hadoop.ozone.custos.CustosProvider;
 import org.apache.hadoop.util.ReflectionUtils;
 import org.slf4j.Logger;
@@ -61,7 +60,7 @@ public class CustosProviderRegistry {
     Map<CredentialType, CustosProvider> loaded =
         new EnumMap<>(CredentialType.class);
     Collection<String> classNames =
-        conf.getTrimmedStringCollection(OZONE_CUSTOS_PROVIDERS);
+        conf.getTrimmedStringCollection(PROVIDERS);
     for (String className : classNames) {
       CustosProvider provider = instantiate(className, conf);
       CredentialType type = provider.supportedType();
@@ -70,7 +69,7 @@ public class CustosProviderRegistry {
         throw new IllegalStateException("Two Custos providers claim credential"
             + " type " + type + ": " + previous.getClass().getName() + " and "
             + provider.getClass().getName() + ". Each credential type must map"
-            + " to exactly one provider in " + OZONE_CUSTOS_PROVIDERS + ".");
+            + " to exactly one provider in " + PROVIDERS + ".");
       }
     }
     return loaded;
@@ -83,7 +82,7 @@ public class CustosProviderRegistry {
       clazz = conf.getClassByName(className);
     } catch (ClassNotFoundException e) {
       throw new IllegalArgumentException("Custos provider class not found: "
-          + className + ". Check " + OZONE_CUSTOS_PROVIDERS + ".", e);
+          + className + ". Check " + PROVIDERS + ".", e);
     }
     if (!CustosProvider.class.isAssignableFrom(clazz)) {
       throw new IllegalArgumentException("Custos provider class " + className
@@ -96,19 +95,19 @@ public class CustosProviderRegistry {
   }
 
   /**
-   * Route the credential to its provider and return the verified identity.
+   * Validate the credential and return the authenticated subject.
    *
    * @throws CustosException if no provider handles the credential type or the
    *     provider rejects the credential.
    */
-  public CustosIdentity authenticate(CustosCredential credential)
+  public String validateSubject(CustosCredential credential)
       throws CustosException {
     CustosProvider provider = providers.get(credential.getType());
     if (provider == null) {
       throw new CustosException("No Custos provider is configured for"
           + " credential type " + credential.getType() + ".");
     }
-    return provider.authenticate(credential);
+    return provider.validateSubject(credential);
   }
 
   /**

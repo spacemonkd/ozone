@@ -15,28 +15,35 @@
  * limitations under the License.
  */
 
-package org.apache.hadoop.ozone.custos.server;
+package org.apache.hadoop.ozone.custos.server.identity;
 
-import org.apache.hadoop.ozone.custos.CredentialType;
-import org.apache.hadoop.ozone.custos.CustosCredential;
+import java.util.Collections;
+import java.util.List;
 import org.apache.hadoop.ozone.custos.CustosException;
-import org.apache.hadoop.ozone.custos.CustosProvider;
+import org.apache.hadoop.ozone.custos.identity.AbstractIdentityProvider;
+import org.apache.hadoop.ozone.custos.identity.IdentityContext;
+import org.apache.hadoop.ozone.custos.identity.IdentityProviderType;
 
 /**
- * Test-only second {@link CustosProvider} that also claims
- * {@link CredentialType#OIDC_JWT}, to verify the registry rejects two providers
- * mapping to the same credential type.
+ * Resolves group membership from an LDAP or Active Directory backend for the
+ * authenticated subject.
+ *
+ * <p>PoC scaffold: LDAP lookup is not yet implemented.
  */
-public class StubDuplicateOidcProvider implements CustosProvider {
+public class LdapIdentityProvider extends AbstractIdentityProvider {
 
   @Override
-  public CredentialType supportedType() {
-    return CredentialType.OIDC_JWT;
+  public IdentityProviderType supportedType() {
+    return IdentityProviderType.LDAP;
   }
 
   @Override
-  public String validateSubject(CustosCredential credential)
+  protected List<String> resolveGroups(IdentityContext context)
       throws CustosException {
-    throw new CustosException("stub-duplicate: should never be called");
+    // TODO: look up group membership for context.getSubject() via LDAP.
+    if (context.getClaimGroups() != null && !context.getClaimGroups().isEmpty()) {
+      return context.getClaimGroups();
+    }
+    return Collections.emptyList();
   }
 }

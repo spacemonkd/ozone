@@ -23,31 +23,24 @@ package org.apache.hadoop.ozone.custos;
  * <p>Each credential kind is validated by one provider. Custos loads providers
  * by class name from {@code ozone.custos.providers} and routes an incoming
  * {@link CustosCredential} to the provider whose {@link #supportedType()}
- * matches. Adding a new credential kind is implementing this one interface and
- * listing the class in configuration -- no change to Custos itself.
- *
- * <p>Implementations must have a public no-argument constructor. A provider
- * that needs cluster configuration may also implement
- * {@link org.apache.hadoop.conf.Configurable}; the loader will inject the
- * {@code OzoneConfiguration} before use.
+ * matches. A provider validates the credential and returns the authenticated
+ * subject; {@link org.apache.hadoop.ozone.custos.identity.IdentityProvider}
+ * resolves groups and binds the identity to a token.
  */
 public interface CustosProvider {
 
   /**
-   * @return the credential kind this provider validates. Custos uses this to
-   *     route incoming credentials.
+   * @return the credential kind this provider validates.
    */
   CredentialType supportedType();
 
   /**
-   * Validate the credential and return the identity it proves.
+   * Validate the credential and return the authenticated subject (realm
+   * stripped for Kerberos). Does not resolve groups.
    *
    * @param credential the client-presented credential
-   * @return the verified identity
-   * @throws CustosException if the credential is invalid, expired, or cannot
-   *     be validated. Implementations must not include raw credential material
-   *     in the exception message.
+   * @return the authenticated subject name
+   * @throws CustosException if the credential is invalid or cannot be validated
    */
-  CustosIdentity authenticate(CustosCredential credential)
-      throws CustosException;
+  String validateSubject(CustosCredential credential) throws CustosException;
 }
