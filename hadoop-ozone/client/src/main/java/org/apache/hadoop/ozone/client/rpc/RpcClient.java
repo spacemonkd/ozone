@@ -37,6 +37,7 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.RemovalListener;
 import com.google.common.cache.RemovalNotification;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import com.google.protobuf.ByteString;
 import jakarta.annotation.Nonnull;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -73,6 +74,7 @@ import org.apache.hadoop.hdds.client.ReplicationConfigValidator;
 import org.apache.hadoop.hdds.client.ReplicationFactor;
 import org.apache.hadoop.hdds.client.ReplicationType;
 import org.apache.hadoop.hdds.conf.ConfigurationSource;
+import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 import org.apache.hadoop.hdds.conf.StorageUnit;
 import org.apache.hadoop.hdds.protocol.DatanodeDetails;
 import org.apache.hadoop.hdds.protocol.StorageType;
@@ -126,6 +128,12 @@ import org.apache.hadoop.ozone.client.io.OzoneDataStreamOutput;
 import org.apache.hadoop.ozone.client.io.OzoneInputStream;
 import org.apache.hadoop.ozone.client.io.OzoneOutputStream;
 import org.apache.hadoop.ozone.client.protocol.ClientProtocol;
+import org.apache.hadoop.ozone.custos.CustosCredential;
+import org.apache.hadoop.ozone.custos.CustosException;
+import org.apache.hadoop.ozone.custos.KerberosCredentials;
+import org.apache.hadoop.ozone.custos.client.CustosClientConfig;
+import org.apache.hadoop.ozone.custos.client.CustosGrpcClient;
+import org.apache.hadoop.ozone.custos.proto.CustosTokenProtos.CustosTokenProto;
 import org.apache.hadoop.ozone.om.OmConfig;
 import org.apache.hadoop.ozone.om.exceptions.OMException;
 import org.apache.hadoop.ozone.om.helpers.BasicOmKeyInfo;
@@ -289,6 +297,11 @@ public class RpcClient implements ClientProtocol {
               + " meet the criteria.");
         }
       }
+      // When Custos is enabled, exchange the current Kerberos identity for a
+      // signed Custos session token and attach it to every OMRequest.
+      if (conf.getBoolean(CustosClientConfig.ENABLED, false)) {
+        fetchAndSetCustosToken(ozoneManagerProtocolClientSideTranslatorPB);
+      }
     }
 
     this.xceiverClientManager = createXceiverClientFactory(serviceInfoEx);
@@ -409,6 +422,30 @@ public class RpcClient implements ClientProtocol {
   protected OmTransport createOmTransport(String omServiceId)
       throws IOException {
     return OmTransportFactory.create(conf, ugi, omServiceId);
+  }
+
+  /**
+   * Exchange the current (Kerberos) identity for a signed Custos session token
+   * and set it on the OM protocol client so every OMRequest carries it. Runs
+   * once, at client construction, when {@code ozone.custos.enabled} is true.
+   */
+  private void fetchAndSetCustosToken(
+      OzoneManagerProtocolClientSideTranslatorPB omClient) throws IOException {
+    OzoneConfiguration ozoneConf = OzoneConfiguration.of(conf);
+    String custosHost = conf.get(CustosClientConfig.GRPC_HOST,
+        CustosClientConfig.GRPC_HOST_DEFAULT);
+    try (CustosGrpcClient custosClient =
+        CustosGrpcClient.fromConfiguration(ozoneConf)) {
+      CustosCredential credential =
+          KerberosCredentials.fromCurrentUser(ozoneConf, custosHost);
+      CustosTokenProto token = custosClient.getSessionToken(credential, "", 0L);
+      omClient.setCustosToken(ByteString.copyFrom(token.toByteArray()));
+      LOG.info("Custos: fetched session token for subject={} tokenId={}",
+          token.getSubject(), token.getTokenId());
+    } catch (CustosException e) {
+      throw new IOException("Failed to fetch a Custos session token from "
+          + custosHost, e);
+    }
   }
 
   @Override
