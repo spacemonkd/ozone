@@ -277,6 +277,9 @@ public final class OzoneManagerProtocolClientSideTranslatorPB
   private ThreadLocal<S3Auth> threadLocalS3Auth
       = new ThreadLocal<>();
   private boolean s3AuthCheck;
+  // Serialized CustosTokenProto fetched once for this client's lifetime and
+  // stamped onto every OMRequest. Set by RpcClient when ozone.custos.enabled.
+  private volatile ByteString custosToken;
 
   public static final int BLOCK_ALLOCATION_RETRY_COUNT = 90;
   public static final int BLOCK_ALLOCATION_RETRY_WAIT_TIME_MS = 1000;
@@ -342,6 +345,10 @@ public final class OzoneManagerProtocolClientSideTranslatorPB
     if (s3AuthCheck && getThreadLocalS3Auth() == null) {
       throw new IllegalArgumentException("S3 Auth expected to " +
           "be set but is null " + omRequest.toString());
+    }
+    // Attach the Custos token, when present, for OM to verify the identity.
+    if (custosToken != null) {
+      builder.setCustosToken(custosToken);
     }
     if (threadLocalS3Auth.get() != null) {
       if (!Strings.isNullOrEmpty(threadLocalS3Auth.get().getAccessID())) {
@@ -2199,6 +2206,12 @@ public final class OzoneManagerProtocolClientSideTranslatorPB
   @SkipTracing
   public S3Auth getThreadLocalS3Auth() {
     return this.threadLocalS3Auth.get();
+  }
+
+  @Override
+  @SkipTracing
+  public void setCustosToken(ByteString token) {
+    this.custosToken = token;
   }
 
   /**

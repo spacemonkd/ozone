@@ -17,6 +17,7 @@
 
 package org.apache.hadoop.ozone.om.protocolPB;
 
+import com.google.protobuf.ByteString;
 import org.apache.hadoop.ozone.om.protocol.OzoneManagerProtocol;
 import org.apache.hadoop.ozone.om.protocol.S3Auth;
 
@@ -38,4 +39,12 @@ public interface OzoneManagerClientProtocol extends OzoneManagerProtocol {
   void clearThreadLocalS3Auth();
 
   ThreadLocal<S3Auth> getS3CredentialsProvider();
+
+  /**
+   * Sets the serialized CustosTokenProto to attach to every OMRequest so OM
+   * can verify the client's identity. Set once for the client's lifetime when
+   * ozone.custos.enabled is true; a null value leaves requests unchanged.
+   */
+  default void setCustosToken(ByteString custosToken) {
+  }
 }
