@@ -87,7 +87,7 @@ public final class OzoneAclUtil {
   }
 
   private static boolean checkAccessInAcl(OzoneAcl a, UserGroupInformation ugi,
-      ACLType aclToCheck) {
+      List<String> extraGroups, ACLType aclToCheck) {
     switch (a.getType()) {
     case USER:
       if (a.getName().equals(ugi.getShortUserName())) {
@@ -96,6 +96,13 @@ public final class OzoneAclUtil {
       break;
     case GROUP:
       for (String grp : ugi.getGroupNames()) {
+        if (a.getName().equals(grp)) {
+          return a.checkAccess(aclToCheck);
+        }
+      }
+      // Also honor groups asserted by the caller's Custos token, which the
+      // server group mapping may not resolve for a federated user.
+      for (String grp : extraGroups) {
         if (a.getName().equals(grp)) {
           return a.checkAccess(aclToCheck);
         }
@@ -123,9 +130,10 @@ public final class OzoneAclUtil {
   public static boolean checkAclRights(List<OzoneAcl> acls,
       RequestContext context) throws OMException {
     UserGroupInformation clientUgi = context.getClientUgi();
+    List<String> clientGroups = context.getClientGroups();
     ACLType aclToCheck = context.getAclRights();
     for (OzoneAcl acl : acls) {
-      if (checkAccessInAcl(acl, clientUgi, aclToCheck)) {
+      if (checkAccessInAcl(acl, clientUgi, clientGroups, aclToCheck)) {
         return true;
       }
     }

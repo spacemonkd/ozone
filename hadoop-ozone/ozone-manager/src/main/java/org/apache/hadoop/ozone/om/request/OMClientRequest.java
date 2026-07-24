@@ -25,7 +25,9 @@ import jakarta.annotation.Nonnull;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.nio.file.InvalidPathException;
+import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import org.apache.commons.lang3.StringUtils;
@@ -383,8 +385,20 @@ public abstract class OMClientRequest implements RequestAuditor {
       String vol, String bucket, String key, String volOwner)
       throws IOException {
     ozoneManager.checkAcls(resType, storeType, aclType, vol, bucket, key,
-        createUGIForApi(), getRemoteAddress(), getHostName(), true,
-        volOwner);
+        createUGIForApi(), getCallerGroups(), getRemoteAddress(), getHostName(),
+        true, volOwner);
+  }
+
+  /**
+   * Groups asserted by the caller's Custos token (empty for non-token
+   * requests), read from the same replicated {@code UserInfo} the UGI is
+   * built from, so group ACLs can honor a federated user's token groups.
+   */
+  private List<String> getCallerGroups() {
+    if (getOmRequest().hasUserInfo()) {
+      return getOmRequest().getUserInfo().getGroupsList();
+    }
+    return Collections.emptyList();
   }
 
   /**
@@ -413,7 +427,7 @@ public abstract class OMClientRequest implements RequestAuditor {
       OzoneAclUtils.checkAllAcls((OmMetadataReader) rcMetadataReader.get(),
           resType, storeType, aclType,
           vol, bucket, key, volOwner, bucketOwner, createUGIForApi(),
-          getRemoteAddress(), getHostName());
+          getCallerGroups(), getRemoteAddress(), getHostName());
     }
   }
 

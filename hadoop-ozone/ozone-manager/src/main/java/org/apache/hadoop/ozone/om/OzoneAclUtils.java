@@ -23,6 +23,8 @@ import static org.apache.hadoop.ozone.security.acl.OzoneObj.ResourceType.VOLUME;
 
 import java.io.IOException;
 import java.net.InetAddress;
+import java.util.Collections;
+import java.util.List;
 import org.apache.hadoop.ozone.om.exceptions.OMException;
 import org.apache.hadoop.ozone.security.acl.IAccessAuthorizer;
 import org.apache.hadoop.ozone.security.acl.OzoneObj;
@@ -81,13 +83,25 @@ public final class OzoneAclUtils {
       String vol, String bucket, String key, String volOwner,
       String bucketOwner, UserGroupInformation user, InetAddress remoteAddress,
       String hostName) throws IOException {
+    checkAllAcls(omMetadataReader, resType, storeType, aclType, vol, bucket,
+        key, volOwner, bucketOwner, user, Collections.emptyList(),
+        remoteAddress, hostName);
+  }
+
+  @SuppressWarnings("parameternumber")
+  public static void checkAllAcls(OmMetadataReader omMetadataReader,
+      OzoneObj.ResourceType resType,
+      OzoneObj.StoreType storeType, IAccessAuthorizer.ACLType aclType,
+      String vol, String bucket, String key, String volOwner,
+      String bucketOwner, UserGroupInformation user, List<String> clientGroups,
+      InetAddress remoteAddress, String hostName) throws IOException {
 
     switch (resType) {
     //For Volume level access we only need to check {OWNER} equal
     // to Volume Owner.
     case VOLUME:
       omMetadataReader.checkAcls(resType, storeType, aclType, vol, bucket, key,
-          user, remoteAddress, hostName, true,
+          user, clientGroups, remoteAddress, hostName, true,
           volOwner);
       break;
     case BUCKET:
@@ -100,7 +114,7 @@ public final class OzoneAclUtils {
       if (isOwner(user, volOwner)) {
         omMetadataReader.checkAcls(resType, storeType,
             aclType, vol, bucket, key,
-            user, remoteAddress, hostName, true,
+            user, clientGroups, remoteAddress, hostName, true,
             volOwner);
       } else {
         IAccessAuthorizer.ACLType parentAclRight =
@@ -115,11 +129,11 @@ public final class OzoneAclUtils {
 
         omMetadataReader.checkAcls(OzoneObj.ResourceType.VOLUME, storeType,
             parentAclRight, vol, bucket, key, user,
-            remoteAddress, hostName, true,
+            clientGroups, remoteAddress, hostName, true,
             volOwner);
         omMetadataReader.checkAcls(resType, storeType,
             aclType, vol, bucket, key,
-            user, remoteAddress, hostName, true,
+            user, clientGroups, remoteAddress, hostName, true,
             bucketOwner);
       }
       break;

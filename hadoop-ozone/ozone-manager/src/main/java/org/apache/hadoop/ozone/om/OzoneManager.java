@@ -2790,6 +2790,18 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
       UserGroupInformation ugi, InetAddress remoteAddress, String hostName,
       boolean throwIfPermissionDenied, String owner)
       throws OMException {
+    return checkAcls(resType, storeType, aclType, vol, bucket, key, ugi,
+        Collections.emptyList(), remoteAddress, hostName,
+        throwIfPermissionDenied, owner);
+  }
+
+  @SuppressWarnings("parameternumber")
+  public boolean checkAcls(ResourceType resType, StoreType storeType,
+      ACLType aclType, String vol, String bucket, String key,
+      UserGroupInformation ugi, List<String> clientGroups,
+      InetAddress remoteAddress, String hostName,
+      boolean throwIfPermissionDenied, String owner)
+      throws OMException {
     OzoneObj obj = OzoneObjInfo.Builder.newBuilder()
         .setResType(resType)
         .setStoreType(storeType)
@@ -2798,6 +2810,7 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
         .setKeyName(key).build();
     RequestContext context = RequestContext.newBuilder()
         .setClientUgi(ugi)
+        .setClientGroups(clientGroups)
         .setIp(remoteAddress)
         .setHost(hostName)
         .setAclType(ACLIdentityType.USER)

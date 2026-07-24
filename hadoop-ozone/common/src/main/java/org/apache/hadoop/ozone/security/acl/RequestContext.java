@@ -18,6 +18,8 @@
 package org.apache.hadoop.ozone.security.acl;
 
 import java.net.InetAddress;
+import java.util.Collections;
+import java.util.List;
 import org.apache.hadoop.ozone.security.acl.IAccessAuthorizer.ACLIdentityType;
 import org.apache.hadoop.ozone.security.acl.IAccessAuthorizer.ACLType;
 import org.apache.hadoop.security.UserGroupInformation;
@@ -29,6 +31,12 @@ public final class RequestContext {
   private final String host;
   private final InetAddress ip;
   private final UserGroupInformation clientUgi;
+  /**
+   * Groups asserted by the caller's Custos token, in addition to those the
+   * {@link #clientUgi} resolves through the server group mapping. Empty for
+   * non-token requests, so group ACL evaluation is unchanged for them.
+   */
+  private final List<String> clientGroups;
   private final String serviceId;
   private final ACLIdentityType aclType;
   private final ACLType aclRights;
@@ -60,6 +68,7 @@ public final class RequestContext {
     this.host = builder.host;
     this.ip = builder.ip;
     this.clientUgi = builder.clientUgi;
+    this.clientGroups = builder.clientGroups;
     this.serviceId = builder.serviceId;
     this.aclType = builder.aclType;
     this.aclRights = builder.aclRights;
@@ -76,6 +85,7 @@ public final class RequestContext {
     private String host;
     private InetAddress ip;
     private UserGroupInformation clientUgi;
+    private List<String> clientGroups = Collections.emptyList();
     private String serviceId;
     private IAccessAuthorizer.ACLIdentityType aclType;
     private IAccessAuthorizer.ACLType aclRights;
@@ -106,6 +116,12 @@ public final class RequestContext {
 
     public Builder setClientUgi(UserGroupInformation cUgi) {
       this.clientUgi = cUgi;
+      return this;
+    }
+
+    public Builder setClientGroups(List<String> groups) {
+      this.clientGroups = groups == null
+          ? Collections.emptyList() : groups;
       return this;
     }
 
@@ -169,6 +185,10 @@ public final class RequestContext {
     return clientUgi;
   }
 
+  public List<String> getClientGroups() {
+    return clientGroups;
+  }
+
   public String getServiceId() {
     return serviceId;
   }
@@ -208,6 +228,7 @@ public final class RequestContext {
         .setHost(host)
         .setIp(ip)
         .setClientUgi(clientUgi)
+        .setClientGroups(clientGroups)
         .setServiceId(serviceId)
         .setAclType(aclType)
         .setAclRights(aclRights)
