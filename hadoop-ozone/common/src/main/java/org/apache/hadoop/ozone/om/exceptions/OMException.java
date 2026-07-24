@@ -168,6 +168,8 @@ public class OMException extends IOException {
 
     INVALID_TOKEN,
 
+    INVALID_CUSTOS_TOKEN,
+
     TOKEN_EXPIRED,
 
     TOKEN_ERROR_OTHER,

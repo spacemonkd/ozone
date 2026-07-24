@@ -192,6 +192,12 @@ message OMRequest {
 
   optional ReadConsistencyHint readConsistencyHint = 7;
 
+  // Serialized CustosTokenProto issued by the Custos auth service. When set and
+  // ozone.custos.enabled is true, OM verifies it for identity; when absent, OM
+  // falls back to the existing Kerberos / S3Authentication paths. Carried as
+  // bytes to keep interface-client free of a dependency on ozone-custos-common.
+  optional bytes custosToken = 154;
+
   optional CreateVolumeRequest              createVolumeRequest            = 11;
   optional SetVolumePropertyRequest         setVolumePropertyRequest       = 12;
   optional CheckVolumeAccessRequest         checkVolumeAccessRequest       = 13;
@@ -678,6 +684,7 @@ message VolumeInfo {
 */
 message UserInfo {
     optional string userName = 1;
+    repeated string groups = 2;
     optional string remoteAddress = 3;
     optional string hostName = 4;
 }
