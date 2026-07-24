@@ -86,7 +86,8 @@ public final class SpnegoValidator {
         throw new CustosException("SPNEGO accept produced no source principal.");
       }
       String principal = srcName.toString();
-      LOG.debug("SPNEGO authenticated principal {}", stripRealm(principal));
+      LOG.info("SPNEGO handshake established; authenticated principal {}",
+          stripRealm(principal));
       return stripRealm(principal);
     } finally {
       context.dispose();

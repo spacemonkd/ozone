@@ -29,10 +29,10 @@ import org.apache.hadoop.ozone.custos.proto.CustosTokenProtos.CustosTokenProto;
  * fields (see {@link #computeSigningInput(CustosTokenProto)}) so signing and
  * verification operate over the same bytes.
  *
- * <p>The only implementation today is {@link HmacCustosTokenSigner}, a shared
- * symmetric HMAC intended for the proof of concept. Production would replace it
- * with a signer backed by the SCM {@code SecretKeyClient} so the key is managed
- * and rotated by SCM rather than shared through configuration.
+ * <p>The implementation is {@code SecretKeySignedTokenSigner}, which signs and
+ * verifies with the HMAC keys managed and rotated by SCM and distributed
+ * through the {@code SecretKeyClient} that OM and delegation tokens already
+ * use, so no key is shared through configuration.
  */
 public interface CustosTokenSigner {
 

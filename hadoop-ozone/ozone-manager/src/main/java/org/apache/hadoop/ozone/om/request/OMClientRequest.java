@@ -38,6 +38,7 @@ import org.apache.hadoop.ozone.OzoneConsts;
 import org.apache.hadoop.ozone.audit.AuditAction;
 import org.apache.hadoop.ozone.audit.AuditEventStatus;
 import org.apache.hadoop.ozone.audit.AuditLogger;
+import org.apache.hadoop.ozone.custos.client.CustosClientConfig;
 import org.apache.hadoop.ozone.custos.proto.CustosTokenProtos.CustosTokenProto;
 import org.apache.hadoop.ozone.om.IOmMetadataReader;
 import org.apache.hadoop.ozone.om.OmMetadataReader;
@@ -164,6 +165,12 @@ public abstract class OMClientRequest implements RequestAuditor {
 
   /**
    * Get User information which needs to be set in the OMRequest object.
+   *
+   * <p>Note: this builds the identity from the authenticated RPC user only. It
+   * does NOT verify or honor a Custos token, so a request type whose
+   * {@code preExecute()} stamps {@code setUserInfo(getUserInfo())} directly
+   * bypasses Custos entirely (no token verification, no token groups). Use
+   * {@link #getUserIfNotExists(OzoneManager)} to participate in Custos.
    * @return User Info.
    */
   public OzoneManagerProtocolProtos.UserInfo getUserInfo() throws IOException {
@@ -207,11 +214,19 @@ public abstract class OMClientRequest implements RequestAuditor {
    * For non-rpc internal calls Server.getRemoteUser()
    * and Server.getRemoteIp() will be null.
    * Passing getCurrentUser() and Ip of the Om node that started it.
+   *
+   * <p>This is the Custos-aware entry point: when {@code ozone.custos.enabled}
+   * is true and the request carries a Custos token, the identity (subject and
+   * groups) is built from the verified token. Only request types whose
+   * {@code preExecute()} routes through this method participate in Custos;
+   * those that call {@link #getUserInfo()} directly do not (see its note).
    * @return User Info.
    */
   public OzoneManagerProtocolProtos.UserInfo getUserIfNotExists(
       OzoneManager ozoneManager) throws IOException {
-    if (getOmRequest().hasCustosToken()) {
+    if (getOmRequest().hasCustosToken()
+        && ozoneManager.getConfiguration().getBoolean(
+            CustosClientConfig.ENABLED, false)) {
       return getUserInfoFromCustosToken(ozoneManager);
     }
     OzoneManagerProtocolProtos.UserInfo userInfo = getUserInfo();
@@ -242,6 +257,12 @@ public abstract class OMClientRequest implements RequestAuditor {
    * (locally, no call to Custos); on success the token's subject and groups
    * become the {@link OzoneManagerProtocolProtos.UserInfo} that is replicated
    * and used to build the UGI on apply.
+   *
+   * <p>Trust boundary: verification happens here, once, on the leader during
+   * {@code preExecute()}. The raw token is NOT re-verified on the Ratis apply
+   * path; the sanitized {@code UserInfo} produced here is what gets replicated
+   * and trusted by every OM. This is why {@code UserInfo.groups} must only ever
+   * be written from this verified path (see {@code getCallerGroups()}).
    */
   private OzoneManagerProtocolProtos.UserInfo getUserInfoFromCustosToken(
       OzoneManager ozoneManager) throws IOException {

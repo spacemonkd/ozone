@@ -56,6 +56,20 @@ public final class CustosTokenVerifier {
    *     unknown, or it has expired.
    */
   public void verify(CustosTokenProto token) throws OMException {
+    try {
+      doVerify(token);
+    } catch (OMException e) {
+      // The message carries the reason and token id; the signature bytes are
+      // never logged.
+      LOG.warn("Custos token verification failed for token {} (subject={}): {}",
+          token.getTokenId(), token.getSubject(), e.getMessage());
+      throw e;
+    }
+    LOG.debug("Verified Custos token {} for subject {} (groups={})",
+        token.getTokenId(), token.getSubject(), token.getGroupsList());
+  }
+
+  private void doVerify(CustosTokenProto token) throws OMException {
     if (secretKeyClient == null) {
       throw new OMException("Cannot verify Custos token: no SCM secret key "
           + "client is available (is security enabled?)",
@@ -87,8 +101,5 @@ public final class CustosTokenVerifier {
       throw new OMException("Custos token " + token.getTokenId()
           + " has expired", ResultCodes.INVALID_CUSTOS_TOKEN);
     }
-
-    LOG.debug("Verified Custos token {} for subject {} (groups={})",
-        token.getTokenId(), token.getSubject(), token.getGroupsList());
   }
 }

@@ -28,11 +28,18 @@ import org.apache.hadoop.ozone.custos.proto.CustosServiceProtos.GetSessionTokenR
 import org.apache.hadoop.ozone.custos.proto.CustosServiceProtos.RenewSessionTokenRequest;
 import org.apache.hadoop.ozone.custos.proto.CustosServiceProtos.RenewSessionTokenResponse;
 import org.apache.hadoop.ozone.custos.proto.CustosTokenProtos.CustosTokenProto;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
- * gRPC service implementation delegating to {@link CustosAuthService}.
+ * gRPC service implementation delegating to {@link CustosAuthService}. This is
+ * the interception point for the PoC: each incoming call is logged at INFO with
+ * the credential type (never the credential material) so the flow can be traced.
  */
 public class CustosServiceImpl extends CustosServiceGrpc.CustosServiceImplBase {
+
+  private static final Logger LOG =
+      LoggerFactory.getLogger(CustosServiceImpl.class);
 
   private final CustosAuthService authService;
 
@@ -43,16 +50,23 @@ public class CustosServiceImpl extends CustosServiceGrpc.CustosServiceImplBase {
   @Override
   public void getSessionToken(GetSessionTokenRequest request,
       StreamObserver<GetSessionTokenResponse> responseObserver) {
+    LOG.info("GetSessionToken intercepted: credentialType={}, audience='{}', "
+        + "requestedTtlMs={}", request.getCredential().getType(),
+        request.getAudience(), request.getRequestedTtlMs());
     try {
       CustosCredential credential = CustosProtoHelper.fromProto(
           request.getCredential());
       CustosTokenProto token = authService.getSessionToken(credential,
           request.getAudience(), request.getRequestedTtlMs());
+      LOG.info("GetSessionToken succeeded: tokenId={}, subject={}",
+          token.getTokenId(), token.getSubject());
       responseObserver.onNext(GetSessionTokenResponse.newBuilder()
           .setToken(token)
           .build());
       responseObserver.onCompleted();
     } catch (CustosException e) {
+      LOG.warn("GetSessionToken rejected (credentialType={}): {}",
+          request.getCredential().getType(), e.getMessage());
       responseObserver.onError(Status.UNAUTHENTICATED
           .withDescription(e.getMessage())
           .asRuntimeException());
@@ -62,14 +76,20 @@ public class CustosServiceImpl extends CustosServiceGrpc.CustosServiceImplBase {
   @Override
   public void renewSessionToken(RenewSessionTokenRequest request,
       StreamObserver<RenewSessionTokenResponse> responseObserver) {
+    LOG.info("RenewSessionToken intercepted: tokenId={}, requestedTtlMs={}",
+        request.getToken().getTokenId(), request.getRequestedTtlMs());
     try {
       CustosTokenProto token = authService.renewSessionToken(
           request.getToken(), request.getRequestedTtlMs());
+      LOG.info("RenewSessionToken succeeded: tokenId={}, newExpiryMs={}",
+          token.getTokenId(), token.getExpiryMs());
       responseObserver.onNext(RenewSessionTokenResponse.newBuilder()
           .setToken(token)
           .build());
       responseObserver.onCompleted();
     } catch (CustosException e) {
+      LOG.warn("RenewSessionToken rejected (tokenId={}): {}",
+          request.getToken().getTokenId(), e.getMessage());
       responseObserver.onError(Status.UNAUTHENTICATED
           .withDescription(e.getMessage())
           .asRuntimeException());

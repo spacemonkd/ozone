@@ -30,13 +30,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Orchestrates credential validation, identity resolution, and token binding.
+ * Orchestrates credential validation, identity resolution, token binding, and
+ * signing.
  *
  * <p>For Kerberos: {@link CustosProviderRegistry} validates the SPNEGO token and
  * returns the subject; {@link IdentityProviderRegistry} resolves groups through
  * {@link org.apache.hadoop.ozone.custos.server.identity.KerberosIdentityProvider}
- * and binds the identity to a {@link CustosTokenProto}. Token signing is
- * applied in a later step.
+ * and binds the identity to a {@link CustosTokenProto}. The token is then signed
+ * with the configured {@link CustosTokenSigner} (an SCM-managed key) so OM can
+ * verify it locally. The signer is null only in tests, where an unsigned token
+ * is returned.
  */
 public class CustosAuthService {
 
@@ -63,20 +66,25 @@ public class CustosAuthService {
   }
 
   /**
-   * Validate a credential, resolve identity, and return an unsigned session
-   * token ready for signing.
+   * Validate a credential, resolve identity, and return a signed session token
+   * (unsigned only when no signer is configured, i.e. in tests). The token is
+   * multi-use for the session's lifetime and bounded by a maximum lifetime.
    */
   public CustosTokenProto getSessionToken(CustosCredential credential,
       String audience, long requestedTtlMs) throws CustosException {
     String subject = providerRegistry.validateSubject(credential);
     IdentityProviderType identityType =
         CredentialIdentityMapping.forCredential(credential.getType());
+    LOG.info("Credential validated: type={} -> subject={}, identityProvider={}",
+        credential.getType(), subject, identityType);
 
     IdentityContext context = IdentityContext.newBuilder()
         .setProviderType(identityType)
         .setSubject(subject)
         .build();
     CustosIdentity identity = identityProviderRegistry.resolveIdentity(context);
+    LOG.info("Resolved identity: subject={}, groups={}",
+        identity.getSubject(), identity.getGroups());
 
     long sessionTtlMs = requestedTtlMs > 0 ? requestedTtlMs : DEFAULT_SESSION_TTL_MS;
     long issuedAtMs = System.currentTimeMillis();
@@ -93,12 +101,14 @@ public class CustosAuthService {
         .build();
     if (signer != null) {
       token = signer.sign(token);
-      LOG.debug("Issued signed session token {} for subject {} (alg={}, keyId={})",
-          token.getTokenId(), token.getSubject(),
-          token.getSignatureAlgorithm(), token.getSigningKeyId());
+      LOG.info("Issued signed session token: tokenId={}, subject={}, groups={}, "
+          + "alg={}, keyId={}, expiryMs={}, multiUse={}",
+          token.getTokenId(), token.getSubject(), token.getGroupsList(),
+          token.getSignatureAlgorithm(), token.getSigningKeyId(),
+          token.getExpiryMs(), token.getMultiUse());
     } else {
-      LOG.debug("Issued unsigned session token {} for subject {}",
-          token.getTokenId(), token.getSubject());
+      LOG.info("Issued unsigned session token: tokenId={}, subject={} "
+          + "(no signer configured)", token.getTokenId(), token.getSubject());
     }
     return token;
   }
