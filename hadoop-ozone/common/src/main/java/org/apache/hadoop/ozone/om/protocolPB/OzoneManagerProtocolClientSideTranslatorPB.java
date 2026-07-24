@@ -277,9 +277,11 @@ public final class OzoneManagerProtocolClientSideTranslatorPB
   private ThreadLocal<S3Auth> threadLocalS3Auth
       = new ThreadLocal<>();
   private boolean s3AuthCheck;
-  // Serialized CustosTokenProto fetched once for this client's lifetime and
-  // stamped onto every OMRequest. Set by RpcClient when ozone.custos.enabled.
-  private volatile ByteString custosToken;
+  // Serialized CustosTokenProto (raw bytes) fetched once for this client's
+  // lifetime and stamped onto every OMRequest. Set by RpcClient when
+  // ozone.custos.enabled. Kept as bytes so the client layer needs no protobuf
+  // dependency; wrapped into a ByteString here at the protobuf boundary.
+  private volatile byte[] custosToken;
 
   public static final int BLOCK_ALLOCATION_RETRY_COUNT = 90;
   public static final int BLOCK_ALLOCATION_RETRY_WAIT_TIME_MS = 1000;
@@ -348,7 +350,7 @@ public final class OzoneManagerProtocolClientSideTranslatorPB
     }
     // Attach the Custos token, when present, for OM to verify the identity.
     if (custosToken != null) {
-      builder.setCustosToken(custosToken);
+      builder.setCustosToken(ByteString.copyFrom(custosToken));
     }
     if (threadLocalS3Auth.get() != null) {
       if (!Strings.isNullOrEmpty(threadLocalS3Auth.get().getAccessID())) {
@@ -2210,7 +2212,7 @@ public final class OzoneManagerProtocolClientSideTranslatorPB
 
   @Override
   @SkipTracing
-  public void setCustosToken(ByteString token) {
+  public void setCustosToken(byte[] token) {
     this.custosToken = token;
   }
 

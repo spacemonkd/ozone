@@ -37,7 +37,6 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.RemovalListener;
 import com.google.common.cache.RemovalNotification;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
-import com.google.protobuf.ByteString;
 import jakarta.annotation.Nonnull;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -439,7 +438,7 @@ public class RpcClient implements ClientProtocol {
       CustosCredential credential =
           KerberosCredentials.fromCurrentUser(ozoneConf, custosHost);
       CustosTokenProto token = custosClient.getSessionToken(credential, "", 0L);
-      omClient.setCustosToken(ByteString.copyFrom(token.toByteArray()));
+      omClient.setCustosToken(token.toByteArray());
       LOG.info("Custos: fetched session token for subject={} tokenId={}",
           token.getSubject(), token.getTokenId());
     } catch (CustosException e) {
