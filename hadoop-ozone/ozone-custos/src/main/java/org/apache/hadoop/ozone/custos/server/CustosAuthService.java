@@ -25,6 +25,7 @@ import org.apache.hadoop.ozone.custos.identity.IdentityContext;
 import org.apache.hadoop.ozone.custos.identity.IdentityProviderType;
 import org.apache.hadoop.ozone.custos.identity.TokenBinding;
 import org.apache.hadoop.ozone.custos.proto.CustosTokenProtos.CustosTokenProto;
+import org.apache.hadoop.ozone.custos.token.CustosTokenSigner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,11 +47,19 @@ public class CustosAuthService {
 
   private final CustosProviderRegistry providerRegistry;
   private final IdentityProviderRegistry identityProviderRegistry;
+  private final CustosTokenSigner signer;
 
   public CustosAuthService(CustosProviderRegistry providerRegistry,
       IdentityProviderRegistry identityProviderRegistry) {
+    this(providerRegistry, identityProviderRegistry, null);
+  }
+
+  public CustosAuthService(CustosProviderRegistry providerRegistry,
+      IdentityProviderRegistry identityProviderRegistry,
+      CustosTokenSigner signer) {
     this.providerRegistry = providerRegistry;
     this.identityProviderRegistry = identityProviderRegistry;
+    this.signer = signer;
   }
 
   /**
@@ -82,8 +91,15 @@ public class CustosAuthService {
     CustosTokenProto token = identityProviderRegistry
         .associateToToken(identity, identityType, binding)
         .build();
-    LOG.debug("Issued unsigned session token {} for subject {}",
-        token.getTokenId(), token.getSubject());
+    if (signer != null) {
+      token = signer.sign(token);
+      LOG.debug("Issued signed session token {} for subject {} (alg={}, keyId={})",
+          token.getTokenId(), token.getSubject(),
+          token.getSignatureAlgorithm(), token.getSigningKeyId());
+    } else {
+      LOG.debug("Issued unsigned session token {} for subject {}",
+          token.getTokenId(), token.getSubject());
+    }
     return token;
   }
 
@@ -108,6 +124,10 @@ public class CustosAuthService {
     CustosTokenProto renewed = presented.toBuilder()
         .setExpiryMs(now + sessionTtlMs)
         .build();
+    if (signer != null) {
+      // Expiry changed, so the previous signature no longer covers the token.
+      renewed = signer.sign(renewed);
+    }
     LOG.debug("Renewed session token {} until {}", renewed.getTokenId(),
         renewed.getExpiryMs());
     return renewed;

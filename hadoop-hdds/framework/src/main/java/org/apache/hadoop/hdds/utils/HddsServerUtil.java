@@ -97,6 +97,7 @@ import org.apache.hadoop.hdds.protocol.SecretKeyProtocolScm;
 import org.apache.hadoop.hdds.protocol.proto.HddsProtos.NodeType;
 import org.apache.hadoop.hdds.protocolPB.SCMSecurityProtocolClientSideTranslatorPB;
 import org.apache.hadoop.hdds.protocolPB.SecretKeyProtocolClientSideTranslatorPB;
+import org.apache.hadoop.hdds.protocolPB.SecretKeyProtocolCustosPB;
 import org.apache.hadoop.hdds.protocolPB.SecretKeyProtocolDatanodePB;
 import org.apache.hadoop.hdds.protocolPB.SecretKeyProtocolOmPB;
 import org.apache.hadoop.hdds.protocolPB.SecretKeyProtocolScmPB;
@@ -678,6 +679,20 @@ public final class HddsServerUtil {
         new SecretKeyProtocolFailoverProxyProvider(conf, ugi,
             SecretKeyProtocolDatanodePB.class),
         SecretKeyProtocolDatanodePB.class);
+  }
+
+  /**
+   * Create a {@link org.apache.hadoop.hdds.protocol.SecretKeyProtocol} for
+   * the Custos auth service, should be used only if the user is the Custos
+   * identity.
+   */
+  public static SecretKeyProtocolClientSideTranslatorPB
+      getSecretKeyClientForCustos(ConfigurationSource conf) throws IOException {
+    return new SecretKeyProtocolClientSideTranslatorPB(
+        new SecretKeyProtocolFailoverProxyProvider(conf,
+            UserGroupInformation.getCurrentUser(),
+            SecretKeyProtocolCustosPB.class),
+        SecretKeyProtocolCustosPB.class);
   }
 
   /**

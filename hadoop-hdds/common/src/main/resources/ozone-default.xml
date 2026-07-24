@@ -3103,6 +3103,15 @@
     </description>
   </property>
   <property>
+    <name>hdds.security.client.scm.secretkey.custos.protocol.acl</name>
+    <value>*</value>
+    <tag>SECURITY</tag>
+    <description>
+      Comma separated list of users and groups allowed to access
+      client scm secret key protocol for the Custos auth service.
+    </description>
+  </property>
+  <property>
     <name>ozone.om.security.client.protocol.acl</name>
     <value>*</value>
     <tag>SECURITY</tag>

@@ -55,6 +55,7 @@ import org.apache.hadoop.hdds.protocol.proto.HddsProtos.ScmNodeDetailsProto;
 import org.apache.hadoop.hdds.protocol.proto.SCMSecretKeyProtocolProtos;
 import org.apache.hadoop.hdds.protocol.proto.SCMSecurityProtocolProtos;
 import org.apache.hadoop.hdds.protocolPB.SCMSecurityProtocolPB;
+import org.apache.hadoop.hdds.protocolPB.SecretKeyProtocolCustosPB;
 import org.apache.hadoop.hdds.protocolPB.SecretKeyProtocolDatanodePB;
 import org.apache.hadoop.hdds.protocolPB.SecretKeyProtocolOmPB;
 import org.apache.hadoop.hdds.protocolPB.SecretKeyProtocolScmPB;
@@ -163,6 +164,8 @@ public class SCMSecurityProtocolServer implements SCMSecurityProtocol,
     HddsServerUtil.addPBProtocol(conf, SecretKeyProtocolOmPB.class,
         secretKeyService, rpcServer);
     HddsServerUtil.addPBProtocol(conf, SecretKeyProtocolScmPB.class,
+        secretKeyService, rpcServer);
+    HddsServerUtil.addPBProtocol(conf, SecretKeyProtocolCustosPB.class,
         secretKeyService, rpcServer);
     if (conf.getBoolean(
         CommonConfigurationKeysPublic.HADOOP_SECURITY_AUTHORIZATION, false)) {

@@ -18,11 +18,21 @@
 package org.apache.hadoop.ozone.custos.server;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.concurrent.Callable;
 import org.apache.hadoop.hdds.cli.GenericCli;
 import org.apache.hadoop.hdds.cli.HddsVersionProvider;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
+import org.apache.hadoop.hdds.protocol.SecretKeyProtocol;
+import org.apache.hadoop.hdds.security.symmetric.DefaultSecretKeyClient;
+import org.apache.hadoop.hdds.security.symmetric.SecretKeyClient;
+import org.apache.hadoop.hdds.utils.HddsServerUtil;
+import org.apache.hadoop.ozone.OzoneSecurityUtil;
+import org.apache.hadoop.ozone.custos.KerberosCredentials;
+import org.apache.hadoop.ozone.custos.token.CustosTokenSigner;
+import org.apache.hadoop.security.SecurityUtil;
+import org.apache.hadoop.security.UserGroupInformation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import picocli.CommandLine.Command;
@@ -54,6 +64,7 @@ public class Custos extends GenericCli implements Callable<Void> {
   private CustosAuthService authService;
   private CustosHttpServer httpServer;
   private CustosGrpcServer grpcServer;
+  private SecretKeyClient secretKeyClient;
 
   public static void main(String[] args) {
     new Custos().run(args);
@@ -80,7 +91,22 @@ public class Custos extends GenericCli implements Callable<Void> {
 
     providerRegistry = new CustosProviderRegistry(conf);
     identityProviderRegistry = new IdentityProviderRegistry(conf);
-    authService = new CustosAuthService(providerRegistry, identityProviderRegistry);
+
+    CustosTokenSigner signer = null;
+    if (OzoneSecurityUtil.isSecurityEnabled(conf)) {
+      loginCustosUser(conf);
+      SecretKeyProtocol secretKeyProtocol =
+          HddsServerUtil.getSecretKeyClientForCustos(conf);
+      secretKeyClient = DefaultSecretKeyClient.create(conf, secretKeyProtocol,
+          "custos");
+      secretKeyClient.start(conf);
+      signer = new SecretKeySignedTokenSigner(secretKeyClient);
+      LOG.info("Custos token signing enabled via SCM-managed secret keys");
+    } else {
+      LOG.warn("Security is disabled; Custos will issue unsigned tokens");
+    }
+    authService = new CustosAuthService(providerRegistry,
+        identityProviderRegistry, signer);
 
     httpServer = new CustosHttpServer(new InetSocketAddress(
         config.getHttpBindHost(), config.getHttpBindPort()));
@@ -94,8 +120,24 @@ public class Custos extends GenericCli implements Callable<Void> {
         httpServer.getListenAddress(), grpcServer.getListenAddress());
   }
 
+  /**
+   * Log in as the Custos service principal so RPCs to SCM (for secret keys)
+   * are made under the Custos identity.
+   */
+  private void loginCustosUser(OzoneConfiguration conf) throws IOException {
+    UserGroupInformation.setConfiguration(conf);
+    String hostname = InetAddress.getLocalHost().getCanonicalHostName();
+    SecurityUtil.login(conf, CustosConfig.Keys.KERBEROS_KEYTAB,
+        KerberosCredentials.KERBEROS_PRINCIPAL_KEY, hostname);
+    LOG.info("Custos logged in as {}",
+        UserGroupInformation.getLoginUser().getUserName());
+  }
+
   public void stop() {
     LOG.info("Stopping Ozone Custos auth service");
+    if (secretKeyClient != null) {
+      secretKeyClient.stop();
+    }
     if (grpcServer != null) {
       try {
         grpcServer.stop();

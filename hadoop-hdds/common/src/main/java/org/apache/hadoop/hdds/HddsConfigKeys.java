@@ -344,6 +344,10 @@ public final class HddsConfigKeys {
       HDDS_SECURITY_CLIENT_SCM_SECRET_KEY_DATANODE_PROTOCOL_ACL =
       "hdds.security.client.scm.secretkey.datanode.protocol.acl";
 
+  public static final String
+      HDDS_SECURITY_CLIENT_SCM_SECRET_KEY_CUSTOS_PROTOCOL_ACL =
+      "hdds.security.client.scm.secretkey.custos.protocol.acl";
+
   public static final String OZONE_SECURITY_RECONFIGURE_PROTOCOL_ACL =
       "ozone.security.reconfigure.protocol.acl";
 
