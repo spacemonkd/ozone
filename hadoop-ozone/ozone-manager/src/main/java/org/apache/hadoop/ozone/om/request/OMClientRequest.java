@@ -20,6 +20,7 @@ package org.apache.hadoop.ozone.om.request;
 import static org.apache.hadoop.ozone.om.exceptions.OMException.ResultCodes.UNAUTHORIZED;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.protobuf.InvalidProtocolBufferException;
 import jakarta.annotation.Nonnull;
 import java.io.IOException;
 import java.net.InetAddress;
@@ -35,11 +36,13 @@ import org.apache.hadoop.ozone.OzoneConsts;
 import org.apache.hadoop.ozone.audit.AuditAction;
 import org.apache.hadoop.ozone.audit.AuditEventStatus;
 import org.apache.hadoop.ozone.audit.AuditLogger;
+import org.apache.hadoop.ozone.custos.proto.CustosTokenProtos.CustosTokenProto;
 import org.apache.hadoop.ozone.om.IOmMetadataReader;
 import org.apache.hadoop.ozone.om.OmMetadataReader;
 import org.apache.hadoop.ozone.om.OzoneAclUtils;
 import org.apache.hadoop.ozone.om.OzoneManager;
 import org.apache.hadoop.ozone.om.OzonePrefixPathImpl;
+import org.apache.hadoop.ozone.om.custos.CustosTokenVerifier;
 import org.apache.hadoop.ozone.om.exceptions.OMException;
 import org.apache.hadoop.ozone.om.execution.flowcontrol.ExecutionContext;
 import org.apache.hadoop.ozone.om.helpers.BucketLayout;
@@ -206,6 +209,9 @@ public abstract class OMClientRequest implements RequestAuditor {
    */
   public OzoneManagerProtocolProtos.UserInfo getUserIfNotExists(
       OzoneManager ozoneManager) throws IOException {
+    if (getOmRequest().hasCustosToken()) {
+      return getUserInfoFromCustosToken(ozoneManager);
+    }
     OzoneManagerProtocolProtos.UserInfo userInfo = getUserInfo();
     if (!userInfo.hasRemoteAddress() || !userInfo.hasUserName()) {
       OzoneManagerProtocolProtos.UserInfo.Builder newuserInfo =
@@ -226,6 +232,39 @@ public abstract class OMClientRequest implements RequestAuditor {
       return newuserInfo.build();
     }
     return getUserInfo();
+  }
+
+  /**
+   * Build the request identity from a verified Custos token. The token's
+   * signature and expiry are verified against the SCM-managed secret keys
+   * (locally, no call to Custos); on success the token's subject and groups
+   * become the {@link OzoneManagerProtocolProtos.UserInfo} that is replicated
+   * and used to build the UGI on apply.
+   */
+  private OzoneManagerProtocolProtos.UserInfo getUserInfoFromCustosToken(
+      OzoneManager ozoneManager) throws IOException {
+    CustosTokenProto token;
+    try {
+      token = CustosTokenProto.parseFrom(
+          getOmRequest().getCustosToken().toByteArray());
+    } catch (InvalidProtocolBufferException e) {
+      throw new OMException("Malformed Custos token", e,
+          OMException.ResultCodes.INVALID_CUSTOS_TOKEN);
+    }
+    new CustosTokenVerifier(ozoneManager.getSecretKeyClient()).verify(token);
+
+    OzoneManagerProtocolProtos.UserInfo.Builder userInfo =
+        OzoneManagerProtocolProtos.UserInfo.newBuilder()
+            .setUserName(token.getSubject())
+            .addAllGroups(token.getGroupsList());
+    InetAddress remoteAddress = ProtobufRpcEngine.Server.getRemoteIp();
+    if (remoteAddress != null) {
+      userInfo.setHostName(remoteAddress.getHostName());
+      userInfo.setRemoteAddress(remoteAddress.getHostAddress());
+    }
+    LOG.info("Custos token accepted on OM: subject={}, groups={}, tokenId={}",
+        token.getSubject(), token.getGroupsList(), token.getTokenId());
+    return userInfo.build();
   }
 
   /**

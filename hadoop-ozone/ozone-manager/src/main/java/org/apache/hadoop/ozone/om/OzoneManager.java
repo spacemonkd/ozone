@@ -4671,6 +4671,10 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     return certClient;
   }
 
+  public SecretKeyClient getSecretKeyClient() {
+    return secretKeyClient;
+  }
+
   public String getComponent() {
     return omComponent;
   }
