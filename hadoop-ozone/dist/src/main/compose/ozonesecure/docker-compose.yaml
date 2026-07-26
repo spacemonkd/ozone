@@ -86,15 +86,27 @@ services:
       - 9878:9878
     command: ["/opt/hadoop/bin/ozone","s3g", "-Dozone.om.transport.class=${OZONE_S3_OM_TRANSPORT:-org.apache.hadoop.ozone.om.protocolPB.GrpcOmTransportFactory}"]
     environment:
+      WAITFOR: custos:9894
       OZONE_OPTS:
+    depends_on:
+      kdc:
+        condition: service_healthy
+      custos:
+        condition: service_started
   recon:
     <<: *common-config
     hostname: recon
     ports:
       - 9888:9888
     environment:
+      WAITFOR: custos:9894
       OZONE_OPTS:
     command: ["/opt/hadoop/bin/ozone","recon"]
+    depends_on:
+      kdc:
+        condition: service_healthy
+      custos:
+        condition: service_started
   scm:
     <<: *common-config
     hostname: scm
@@ -106,3 +118,18 @@ services:
       OZONE-SITE.XML_hdds.scm.safemode.min.datanode: "${OZONE_SAFEMODE_MIN_DATANODES:-1}"
       OZONE_OPTS:
     command: ["/opt/hadoop/bin/ozone","scm"]
+  custos:
+    <<: *common-config
+    hostname: custos
+    ports:
+      - 9893:9893
+      - 9894:9894
+    environment:
+      WAITFOR: scm:9961
+      OZONE_OPTS:
+    command: ["/opt/hadoop/bin/ozone","custos"]
+    depends_on:
+      kdc:
+        condition: service_healthy
+      scm:
+        condition: service_started

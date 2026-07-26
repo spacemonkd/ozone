@@ -72,6 +72,15 @@ OZONE-SITE.XML_ozone.om.kerberos.keytab.file=/etc/security/keytabs/om.keytab
 OZONE-SITE.XML_ozone.recon.kerberos.keytab.file=/etc/security/keytabs/recon.keytab
 OZONE-SITE.XML_ozone.recon.kerberos.principal=recon/recon@EXAMPLE.COM
 
+# Custos auth service
+OZONE-SITE.XML_ozone.custos.enabled=true
+OZONE-SITE.XML_ozone.custos.providers=org.apache.hadoop.ozone.custos.server.provider.KerberosProvider
+OZONE-SITE.XML_ozone.custos.identity.providers=org.apache.hadoop.ozone.custos.server.identity.KerberosIdentityProvider
+OZONE-SITE.XML_ozone.custos.kerberos.keytab=/etc/security/keytabs/custos.keytab
+OZONE-SITE.XML_ozone.custos.kerberos.principal=custos/custos@EXAMPLE.COM
+OZONE-SITE.XML_ozone.custos.grpc.host=custos
+OZONE-SITE.XML_ozone.custos.grpc.port=9894
+
 OZONE-SITE.XML_ozone.s3g.kerberos.keytab.file=/etc/security/keytabs/s3g.keytab
 OZONE-SITE.XML_ozone.s3g.kerberos.principal=s3g/s3g@EXAMPLE.COM
 

@@ -65,6 +65,8 @@ export_keytab HTTP/recon recon
 export_keytab testuser/recon recon
 export_keytab testuser2/recon recon
 
+export_keytab custos/custos custos
+
 export_keytab dn/dn dn
 export_keytab HTTP/dn dn
 export_keytab testuser/dn dn
