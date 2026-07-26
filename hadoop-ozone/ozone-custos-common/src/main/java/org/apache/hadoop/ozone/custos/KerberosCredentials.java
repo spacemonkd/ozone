@@ -126,9 +126,9 @@ public final class KerberosCredentials {
   }
 
   /**
-   * SPNEGO mechanism OID ({@code 1.3.6.1.5.5.14.1.2}). This is a fixed IETF identifier.
+   * SPNEGO mechanism OID ({@code 1.3.6.1.5.5.2}). This is a fixed IETF identifier.
    */
   private static Oid spnegoMech() throws GSSException {
-    return new Oid("1.3.6.1.5.5.14.1.2");
+    return new Oid("1.3.6.1.5.5.2");
   }
 }

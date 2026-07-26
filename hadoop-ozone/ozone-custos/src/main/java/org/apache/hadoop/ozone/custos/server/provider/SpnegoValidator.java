@@ -85,17 +85,16 @@ public final class SpnegoValidator {
       if (srcName == null) {
         throw new CustosException("SPNEGO accept produced no source principal.");
       }
+      // Return the full principal (with realm) so downstream OM applies its
+      // hadoop.security.auth_to_local rules exactly as it does for a native
+      // Kerberos RPC. Stripping the realm would leave a name (e.g. "om/om")
+      // that matches no auth_to_local rule.
       String principal = srcName.toString();
       LOG.info("SPNEGO handshake established; authenticated principal {}",
-          stripRealm(principal));
-      return stripRealm(principal);
+          principal);
+      return principal;
     } finally {
       context.dispose();
     }
-  }
-
-  private static String stripRealm(String principal) {
-    int at = principal.indexOf('@');
-    return at < 0 ? principal : principal.substring(0, at);
   }
 }
