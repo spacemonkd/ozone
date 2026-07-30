@@ -21,6 +21,7 @@ import io.grpc.Server;
 import io.grpc.netty.NettyServerBuilder;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,9 +37,9 @@ public class CustosGrpcServer {
   private final InetSocketAddress listenAddress;
 
   public CustosGrpcServer(InetSocketAddress bindAddress,
-      CustosAuthService authService) {
+      CustosAuthService authService, List<String> caCertificates) {
     this.server = NettyServerBuilder.forAddress(bindAddress)
-        .addService(new CustosServiceImpl(authService))
+        .addService(new CustosServiceImpl(authService, caCertificates))
         .build();
     this.listenAddress = bindAddress;
   }

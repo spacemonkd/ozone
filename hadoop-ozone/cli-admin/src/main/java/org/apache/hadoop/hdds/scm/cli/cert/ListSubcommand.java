@@ -81,6 +81,8 @@ public class ListSubcommand extends ScmCertSubcommand {
       return HddsProtos.NodeType.OM;
     } else if (r.equalsIgnoreCase("scm")) {
       return HddsProtos.NodeType.SCM;
+    } else if (r.equalsIgnoreCase("custos")) {
+      return HddsProtos.NodeType.CUSTOS;
     } else {
       return HddsProtos.NodeType.DATANODE;
     }

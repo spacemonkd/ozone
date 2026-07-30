@@ -466,7 +466,8 @@ service CustosService {
 ```
 
 `GetSessionTokenRequest` carries the credential bytes, the credential type, and a requested TTL.
-`GetSessionTokenResponse` carries a serialized `CustosTokenProto`.
+`GetSessionTokenResponse` carries a serialized `CustosTokenProto` and the cluster CA certificate(s).
+Returning the CA only on a successful authentication lets a client establish TLS to OM without obtaining the trust anchor out of band; Custos fetches the CA from SCM (`SCMSecurityProtocol.getCACertificate` / `getRootCACertificate`).
 
 ### 9.2 OzoneFS getDelegationToken() change
 
@@ -621,6 +622,32 @@ Audit records may add fields such as the authorized operation, client id, or sou
 A `CustosToken` authenticates; it does not authorize.
 OM runs the same `checkAcls()` path for token-verified requests as for any other, so there is no batch-scope-versus-per-key gap and no second policy decision point to keep consistent with OM's own ACLs.
 
+**Client trust bootstrap and man-in-the-middle on the Custos hop.**
+Custos returns the cluster CA in the authenticated `GetSessionToken` response so a fresh client — for example a laptop CLI reaching a cluster behind a VPN — can establish TLS to OM without obtaining the trust anchor out of band.
+But if the Custos gRPC endpoint is plaintext, a client that blindly trusts the delivered CA is doing trust-on-first-use with no anchor, and an active man-in-the-middle on the client↔Custos hop can:
+
+- **Substitute the CA** — swap `ca_cert_pem` for the attacker's CA, then MITM the OM connection with an OM certificate signed by that CA, which the client now "verifies" successfully.
+- **Steal the bearer credentials** — the OIDC JWT sent to Custos and the returned `CustosToken` travel in cleartext on that hop; both are bearer secrets, sniffable and replayable to OM until they expire. This is worse than the CA swap and works for a *passive* eavesdropper.
+
+This cannot be fixed server-side: the threat is impersonation *toward the client*, and the client has no key to verify what Custos sends (the token is HMAC-signed with an SCM key that only OM/SCM hold). It needs channel authentication plus a single out-of-band anchor:
+
+- **TLS on the Custos endpoint** is the real fix for the credential leak. Custos serves gRPC over TLS with an SCM-issued certificate, gated by `hdds.grpc.tls.enabled` like every other Ozone gRPC service. Because Custos's primary caller is an external client with no certificate of its own, this is **server-only TLS** (the client authenticates the server; it does not present a client certificate) — not mutual TLS. Service-to-service callers that already hold SCM certificates may additionally use mTLS.
+- **A single out-of-band root anchor** resolves the apparent chicken-and-egg (needing to trust Custos before Custos can hand out trust). The operator ships the SCM *root* CA to the client once — a truststore file or a SHA-256 pin. The root rotates rarely, so this is a one-time, low-churn step, and that one anchor validates TLS to Custos *and* to OM. Authentication then happens over a confidential, authenticated channel, and the CA delivered in the response becomes a convenience/refresh rather than the anchor. The point is to bootstrap one long-lived root, not every leaf certificate.
+- **Client-side options**, in decreasing strength: an out-of-band CA/truststore (`--om-ca-cert`); a fingerprint pin distributed out of band (defeats CA substitution but not the cleartext credential leak); or trust-on-first-use (development only). None of the CA-validation options close the credential leak — only TLS on the Custos hop does, so it is the priority.
+
+The `ca_fingerprint` field in the login response is a bandwidth optimization (let the client skip re-downloading an unchanged CA); it is explicitly **not** a security control and must not be confused with a client-supplied security pin.
+
+**CA rotation seen by the client.**
+Custos fetches the cluster CA once at startup, so clients keep receiving the bundle Custos loaded until Custos refreshes it.
+A client that trusts the SCM *root* is unaffected by leaf/intermediate CA rotation — the new chain still validates to the root it pinned, which is the main reason to anchor on the root rather than an intermediate.
+A client that pinned an intermediate CA must re-fetch after rotation.
+Custos should refresh its cached CA (periodically, or on an SCM rotation notification) so newly delivered bundles track SCM; until then a delivered bundle can lag — safe for root-anchored clients, stale only for intermediate-pinned ones.
+
+**JWKS and issuer transport (OIDC path).**
+The OIDC provider fetches the issuer's signing keys (JWKS) to verify JWT signatures.
+If that fetch is over plaintext HTTP, a man-in-the-middle on the Custos↔IdP hop can inject its own signing keys and forge tokens Custos will accept.
+The issuer and JWKS URLs must be HTTPS in production (the compose demo uses `http://keycloak` for convenience only), and Custos already rejects unsecured (`alg=none`) tokens and pins the signature algorithm to the RSA family to prevent algorithm-confusion downgrades.
+
 ---
 
 ## 12. Compatibility and Upgrade
@@ -660,6 +687,8 @@ After finalization, OM accepts and verifies it when `ozone.custos.enabled=true`.
 - **Authorization.** Move policy evaluation (Ranger or native ACLs) behind Custos so it becomes the single policy decision point. Authorization is done in-process at OM today, and this design keeps it there.
 - **More access paths.** Extend the same provider model to other Ozone access paths beyond OzoneFS and the S3 gateway — for example typed gRPC services (token carried in call metadata), Recon HTTP, and admin RPC — so authentication is validated the same way everywhere.
 - **Inter-service mTLS.** The SCM CA already issues X.509 certificates to services, so extending mutual TLS to all gRPC service connections needs no new CA infrastructure.
+- **Phase out Kerberos entirely.** Kerberos remains only for inter-service RPC (OM ↔ SCM, Recon → OM, Custos → SCM) and legacy client SASL/SPNEGO; SASL/GSSAPI does not map onto gRPC/HTTP-2, which is where the transports are heading. The token layer is already Kerberos-free (SCM-managed HMAC keys), and user authentication is handled by Custos providers (OIDC today). The end state replaces service-to-service Kerberos with mTLS using SCM-issued certificates — deriving identity from the certificate rather than the Kerberos principal — over gRPC, and retires HTTP SPNEGO in favour of OIDC, leaving no dependency on a KDC. Custos itself then moves from a Kerberos keytab to an SCM-issued certificate for its calls to SCM. This is a multi-release effort: services accept both Kerberos and mTLS during migration, and authorization (Ranger / native ACLs) re-keys from Kerberos principals onto the certificate/token identity.
 - **Custom providers via ServiceLoader.** Beyond config-driven loading, let operators drop a JAR implementing `CustosProvider` on the classpath and have it discovered automatically.
+- **Pluggable identity backends (LDAP) and a configurable credential→identity mapping.** The identity SPI already defines an `LDAP` `IdentityProviderType` and an `LdapIdentityProvider` scaffold; implementing its directory group lookup lets an operator resolve authoritative group membership from LDAP/AD independent of how the user authenticated. Today `CredentialIdentityMapping` fixes each `CredentialType` to one `IdentityProviderType` in code (`OIDC_JWT → OIDC`); making that mapping configuration-driven would decouple the authentication backend from the identity backend, so — for example — an OIDC-authenticated user could have groups resolved from LDAP rather than from token claims.
 - **Client-side token caching.** For read-heavy workloads, a client-side cache of session tokens keyed by identity avoids re-fetching, respecting the token TTL and maximum lifetime.
 - **Asymmetric token signing.** HMAC is enough inside one cluster, and it is preferred there because it is fast and needs no key distribution beyond what SCM already does. For cross-cluster federation, where sharing a symmetric key across a trust boundary is not acceptable, an asymmetric algorithm (for example RSA-PSS or Ed25519) can be added as an alternative `signatureAlgorithm`.

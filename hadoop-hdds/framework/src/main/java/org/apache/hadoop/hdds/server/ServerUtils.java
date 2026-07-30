@@ -430,6 +430,8 @@ public final class ServerUtils {
       return "dn";
     case RECON:
       return "recon";
+    case CUSTOS:
+      return "custos";
     default:
       throw new IllegalArgumentException("Unknown NodeType: " + nodeType);
     }

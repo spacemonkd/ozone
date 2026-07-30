@@ -20,10 +20,14 @@ package org.apache.hadoop.ozone.custos.server;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.Callable;
 import org.apache.hadoop.hdds.cli.GenericCli;
 import org.apache.hadoop.hdds.cli.HddsVersionProvider;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
+import org.apache.hadoop.hdds.protocol.SCMSecurityProtocol;
 import org.apache.hadoop.hdds.protocol.SecretKeyProtocol;
 import org.apache.hadoop.hdds.security.symmetric.DefaultSecretKeyClient;
 import org.apache.hadoop.hdds.security.symmetric.SecretKeyClient;
@@ -93,6 +97,7 @@ public class Custos extends GenericCli implements Callable<Void> {
     identityProviderRegistry = new IdentityProviderRegistry(conf);
 
     CustosTokenSigner signer = null;
+    List<String> caCertificates = Collections.emptyList();
     if (OzoneSecurityUtil.isSecurityEnabled(conf)) {
       loginCustosUser(conf);
       SecretKeyProtocol secretKeyProtocol =
@@ -102,6 +107,7 @@ public class Custos extends GenericCli implements Callable<Void> {
       secretKeyClient.start(conf);
       signer = new SecretKeySignedTokenSigner(secretKeyClient);
       LOG.info("Custos token signing enabled via SCM-managed secret keys");
+      caCertificates = fetchClusterCa(conf);
     } else {
       LOG.warn("Security is disabled; Custos will issue unsigned tokens");
     }
@@ -113,7 +119,8 @@ public class Custos extends GenericCli implements Callable<Void> {
     httpServer.start();
 
     grpcServer = new CustosGrpcServer(new InetSocketAddress(
-        config.getGrpcBindHost(), config.getGrpcBindPort()), authService);
+        config.getGrpcBindHost(), config.getGrpcBindPort()), authService,
+        caCertificates);
     grpcServer.start();
 
     LOG.info("Ozone Custos auth service started on {} (HTTP) and {} (gRPC)",
@@ -131,6 +138,33 @@ public class Custos extends GenericCli implements Callable<Void> {
         KerberosCredentials.KERBEROS_PRINCIPAL_KEY, hostname);
     LOG.info("Custos logged in as {}",
         UserGroupInformation.getLoginUser().getUserName());
+  }
+
+  /**
+   * Fetch the cluster CA certificate(s) from SCM so Custos can return them to
+   * authenticated clients (in the GetSessionToken response), letting a client
+   * establish TLS to OM without obtaining the trust anchor out of band.
+   * Best-effort: a failure here does not stop token issuance.
+   */
+  private List<String> fetchClusterCa(OzoneConfiguration conf) {
+    List<String> certs = new ArrayList<>();
+    try {
+      SCMSecurityProtocol scmSecurity = HddsServerUtil.getScmSecurityClient(conf);
+      String rootCa = scmSecurity.getRootCACertificate();
+      if (rootCa != null && !rootCa.isEmpty()) {
+        certs.add(rootCa);
+      }
+      String ca = scmSecurity.getCACertificate();
+      if (ca != null && !ca.isEmpty() && !certs.contains(ca)) {
+        certs.add(ca);
+      }
+      LOG.info("Custos loaded {} cluster CA certificate(s) for client trust "
+          + "bootstrap", certs.size());
+    } catch (Exception e) {
+      LOG.warn("Could not fetch cluster CA from SCM; clients must obtain the OM "
+          + "TLS trust anchor out of band", e);
+    }
+    return certs;
   }
 
   public void stop() {

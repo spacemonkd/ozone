@@ -376,6 +376,8 @@ public class SCMSecurityProtocolServer implements SCMSecurityProtocol,
       errorCode = SCMSecurityException.ErrorCode.GET_OM_CERTIFICATE_FAILED;
     } else if (role == NodeType.DATANODE) {
       errorCode = SCMSecurityException.ErrorCode.GET_DN_CERTIFICATE_FAILED;
+    } else if (role == NodeType.CUSTOS) {
+      errorCode = SCMSecurityException.ErrorCode.GET_CUSTOS_CERTIFICATE_FAILED;
     } else {
       errorCode = SCMSecurityException.ErrorCode.GET_CERTIFICATE_FAILED;
     }

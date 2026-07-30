@@ -169,6 +169,7 @@ enum NodeType {
     SCM = 2;        // Storage Container Manager
     DATANODE = 3;   // DataNode
     RECON = 4;      // Recon
+    CUSTOS = 5;     // Custos auth service
 }
 
 // Should we rename NodeState to DatanodeState?
