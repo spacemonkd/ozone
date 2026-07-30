@@ -113,6 +113,7 @@
     <jetty.version>9.4.58.v20250814</jetty.version>
     <jgrapht.version>1.4.0</jgrapht.version>
     <jgraphx.version>3.9.12</jgraphx.version>
+    <jjwt.version>0.12.6</jjwt.version>
     <jline.version>3.30.15</jline.version>
     <jnr-constants.version>0.11.0</jnr-constants.version>
     <jnr-posix.version>3.2.1</jnr-posix.version>
@@ -547,6 +548,21 @@
         <groupId>io.dropwizard.metrics</groupId>
         <artifactId>metrics-core</artifactId>
         <version>${dropwizard-metrics.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.jsonwebtoken</groupId>
+        <artifactId>jjwt-api</artifactId>
+        <version>${jjwt.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.jsonwebtoken</groupId>
+        <artifactId>jjwt-impl</artifactId>
+        <version>${jjwt.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.jsonwebtoken</groupId>
+        <artifactId>jjwt-jackson</artifactId>
+        <version>${jjwt.version}</version>
       </dependency>
       <dependency>
         <groupId>io.prometheus</groupId>

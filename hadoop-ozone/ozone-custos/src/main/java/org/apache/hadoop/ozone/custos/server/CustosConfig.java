@@ -96,6 +96,58 @@ public class CustosConfig {
           + "provider type must map to exactly one implementation.")
   private String identityProviders = Defaults.IDENTITY_PROVIDERS;
 
+  @Config(key = "ozone.custos.oidc.issuer",
+      defaultValue = "",
+      type = ConfigType.STRING,
+      tags = {ConfigTag.SECURITY},
+      description = "Expected OIDC token issuer (the iss claim). Also the base "
+          + "for JWKS discovery when ozone.custos.oidc.jwks-uri is not set.")
+  private String oidcIssuer = Defaults.OIDC_ISSUER;
+
+  @Config(key = "ozone.custos.oidc.audience",
+      defaultValue = "",
+      type = ConfigType.STRING,
+      tags = {ConfigTag.SECURITY},
+      description = "Expected OIDC token audience (the aud claim).")
+  private String oidcAudience = Defaults.OIDC_AUDIENCE;
+
+  @Config(key = "ozone.custos.oidc.jwks-uri",
+      defaultValue = "",
+      type = ConfigType.STRING,
+      tags = {ConfigTag.SECURITY},
+      description = "Explicit JWKS URL for the OIDC issuer's signing keys. When "
+          + "empty, it is discovered from the issuer's OpenID configuration.")
+  private String oidcJwksUri = Defaults.OIDC_JWKS_URI;
+
+  @Config(key = "ozone.custos.oidc.username-claim",
+      defaultValue = "sub",
+      type = ConfigType.STRING,
+      tags = {ConfigTag.SECURITY},
+      description = "JWT claim to use as the authenticated subject.")
+  private String oidcUsernameClaim = Defaults.OIDC_USERNAME_CLAIM;
+
+  @Config(key = "ozone.custos.oidc.groups-claim",
+      defaultValue = "groups",
+      type = ConfigType.STRING,
+      tags = {ConfigTag.SECURITY},
+      description = "JWT claim to read group membership from.")
+  private String oidcGroupsClaim = Defaults.OIDC_GROUPS_CLAIM;
+
+  @Config(key = "ozone.custos.oidc.roles-claim",
+      defaultValue = "roles",
+      type = ConfigType.STRING,
+      tags = {ConfigTag.SECURITY},
+      description = "JWT claim to read roles from.")
+  private String oidcRolesClaim = Defaults.OIDC_ROLES_CLAIM;
+
+  @Config(key = "ozone.custos.oidc.clock-skew-seconds",
+      defaultValue = "30",
+      type = ConfigType.LONG,
+      tags = {ConfigTag.SECURITY},
+      description = "Allowed clock skew, in seconds, when checking OIDC token "
+          + "expiry and not-before times.")
+  private long oidcClockSkewSeconds = Defaults.OIDC_CLOCK_SKEW_SECONDS;
+
   public boolean isEnabled() {
     return enabled;
   }
@@ -160,6 +212,62 @@ public class CustosConfig {
     this.identityProviders = value;
   }
 
+  public String getOidcIssuer() {
+    return oidcIssuer;
+  }
+
+  public void setOidcIssuer(String value) {
+    this.oidcIssuer = value;
+  }
+
+  public String getOidcAudience() {
+    return oidcAudience;
+  }
+
+  public void setOidcAudience(String value) {
+    this.oidcAudience = value;
+  }
+
+  public String getOidcJwksUri() {
+    return oidcJwksUri;
+  }
+
+  public void setOidcJwksUri(String value) {
+    this.oidcJwksUri = value;
+  }
+
+  public String getOidcUsernameClaim() {
+    return oidcUsernameClaim;
+  }
+
+  public void setOidcUsernameClaim(String value) {
+    this.oidcUsernameClaim = value;
+  }
+
+  public String getOidcGroupsClaim() {
+    return oidcGroupsClaim;
+  }
+
+  public void setOidcGroupsClaim(String value) {
+    this.oidcGroupsClaim = value;
+  }
+
+  public String getOidcRolesClaim() {
+    return oidcRolesClaim;
+  }
+
+  public void setOidcRolesClaim(String value) {
+    this.oidcRolesClaim = value;
+  }
+
+  public long getOidcClockSkewSeconds() {
+    return oidcClockSkewSeconds;
+  }
+
+  public void setOidcClockSkewSeconds(long value) {
+    this.oidcClockSkewSeconds = value;
+  }
+
   /**
    * Full string keys, for tests and for callers (OM, clients) that set them.
    */
@@ -174,6 +282,17 @@ public class CustosConfig {
         "ozone.custos.kerberos.keytab";
     public static final String IDENTITY_PROVIDERS =
         "ozone.custos.identity.providers";
+    public static final String OIDC_ISSUER = "ozone.custos.oidc.issuer";
+    public static final String OIDC_AUDIENCE = "ozone.custos.oidc.audience";
+    public static final String OIDC_JWKS_URI = "ozone.custos.oidc.jwks-uri";
+    public static final String OIDC_USERNAME_CLAIM =
+        "ozone.custos.oidc.username-claim";
+    public static final String OIDC_GROUPS_CLAIM =
+        "ozone.custos.oidc.groups-claim";
+    public static final String OIDC_ROLES_CLAIM =
+        "ozone.custos.oidc.roles-claim";
+    public static final String OIDC_CLOCK_SKEW_SECONDS =
+        "ozone.custos.oidc.clock-skew-seconds";
 
     private Keys() {
     }
@@ -191,6 +310,13 @@ public class CustosConfig {
     public static final int GRPC_BIND_PORT = 9894;
     public static final String KERBEROS_KEYTAB = "";
     public static final String IDENTITY_PROVIDERS = "";
+    public static final String OIDC_ISSUER = "";
+    public static final String OIDC_AUDIENCE = "";
+    public static final String OIDC_JWKS_URI = "";
+    public static final String OIDC_USERNAME_CLAIM = "sub";
+    public static final String OIDC_GROUPS_CLAIM = "groups";
+    public static final String OIDC_ROLES_CLAIM = "roles";
+    public static final long OIDC_CLOCK_SKEW_SECONDS = 30;
 
     private Defaults() {
     }
