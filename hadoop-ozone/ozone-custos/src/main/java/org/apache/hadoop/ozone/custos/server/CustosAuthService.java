@@ -18,6 +18,7 @@
 package org.apache.hadoop.ozone.custos.server;
 
 import java.util.UUID;
+import org.apache.hadoop.ozone.custos.CustosAuthResult;
 import org.apache.hadoop.ozone.custos.CustosCredential;
 import org.apache.hadoop.ozone.custos.CustosException;
 import org.apache.hadoop.ozone.custos.CustosIdentity;
@@ -72,7 +73,8 @@ public class CustosAuthService {
    */
   public CustosTokenProto getSessionToken(CustosCredential credential,
       String audience, long requestedTtlMs) throws CustosException {
-    String subject = providerRegistry.validateSubject(credential);
+    CustosAuthResult authResult = providerRegistry.authenticate(credential);
+    String subject = authResult.getSubject();
     IdentityProviderType identityType =
         CredentialIdentityMapping.forCredential(credential.getType());
     LOG.info("Credential validated: type={} -> subject={}, identityProvider={}",
@@ -81,6 +83,10 @@ public class CustosAuthService {
     IdentityContext context = IdentityContext.newBuilder()
         .setProviderType(identityType)
         .setSubject(subject)
+        .setClaimGroups(authResult.getClaimGroups())
+        .setClaimRoles(authResult.getClaimRoles())
+        .setIssuer(authResult.getIssuer())
+        .setAttributes(authResult.getAttributes())
         .build();
     CustosIdentity identity = identityProviderRegistry.resolveIdentity(context);
     LOG.info("Resolved identity: subject={}, groups={}",

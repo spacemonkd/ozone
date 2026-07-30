@@ -26,6 +26,7 @@ import java.util.Set;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 import org.apache.hadoop.ozone.custos.CredentialType;
+import org.apache.hadoop.ozone.custos.CustosAuthResult;
 import org.apache.hadoop.ozone.custos.CustosCredential;
 import org.apache.hadoop.ozone.custos.CustosException;
 import org.apache.hadoop.ozone.custos.CustosProvider;
@@ -102,12 +103,24 @@ public class CustosProviderRegistry {
    */
   public String validateSubject(CustosCredential credential)
       throws CustosException {
+    return authenticate(credential).getSubject();
+  }
+
+  /**
+   * Validate the credential and return the authenticated subject plus any
+   * claims the provider extracted (for example OIDC groups).
+   *
+   * @throws CustosException if no provider handles the credential type or the
+   *     provider rejects the credential.
+   */
+  public CustosAuthResult authenticate(CustosCredential credential)
+      throws CustosException {
     CustosProvider provider = providers.get(credential.getType());
     if (provider == null) {
       throw new CustosException("No Custos provider is configured for"
           + " credential type " + credential.getType() + ".");
     }
-    return provider.validateSubject(credential);
+    return provider.authenticate(credential);
   }
 
   /**

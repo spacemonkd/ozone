@@ -43,4 +43,20 @@ public interface CustosProvider {
    * @throws CustosException if the credential is invalid or cannot be validated
    */
   String validateSubject(CustosCredential credential) throws CustosException;
+
+  /**
+   * Validate the credential and return the authenticated subject together with
+   * any claims extracted during validation (for example OIDC groups, roles, and
+   * issuer). Providers whose credential also carries identity claims override
+   * this; the default returns the subject alone and leaves group resolution to
+   * an {@link org.apache.hadoop.ozone.custos.identity.IdentityProvider}.
+   *
+   * @param credential the client-presented credential
+   * @return the authenticated subject and any extracted claims
+   * @throws CustosException if the credential is invalid or cannot be validated
+   */
+  default CustosAuthResult authenticate(CustosCredential credential)
+      throws CustosException {
+    return CustosAuthResult.of(validateSubject(credential));
+  }
 }
