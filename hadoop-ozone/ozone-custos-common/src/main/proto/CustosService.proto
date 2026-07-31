@@ -37,27 +37,10 @@ message GetSessionTokenRequest {
   uint64 requestedTtlMs = 2;
   /** OM cluster / service id this token must be valid for. */
   string audience = 3;
-  // Fingerprint (from a prior response's ca_fingerprint) of the CA bundle the
-  // client already holds. When it matches Custos's current bundle, the response
-  // omits ca_cert_pem and sets ca_unchanged, saving the re-send. Bandwidth only;
-  // not a security control (see README: trust bootstrap).
-  string known_ca_fingerprint = 4;
 }
 
 message GetSessionTokenResponse {
   CustosTokenProto token = 1;
-  // Cluster CA certificate(s) (PEM), returned only to authenticated callers so
-  // the client can establish TLS to OM without fetching the trust anchor out of
-  // band. Root first, then the SCM CA if distinct. Omitted when ca_unchanged is
-  // true (client's known_ca_fingerprint already matched).
-  repeated string ca_cert_pem = 2;
-  // True when the client's known_ca_fingerprint matched the current bundle, so
-  // ca_cert_pem is intentionally empty and the client should reuse its cached
-  // CA. Distinguishes "reuse yours" from "Custos has no CA" (both empty list).
-  bool ca_unchanged = 3;
-  // Fingerprint of Custos's current CA bundle (opaque; echo it back in a later
-  // request's known_ca_fingerprint). Empty when Custos holds no CA.
-  string ca_fingerprint = 4;
 }
 
 message RenewSessionTokenRequest {
@@ -70,13 +53,28 @@ message RenewSessionTokenResponse {
   CustosTokenProto token = 1;
 }
 
+message GetClusterInfoRequest {
+}
+
+message GetClusterInfoResponse {
+  // OM gRPC endpoint(s) as host:port, so a client that only knows Custos can
+  // reach OM. One entry for a non-HA cluster, one per node for an HA cluster.
+  repeated string om_grpc_address = 1;
+  // The audience a client should request in GetSessionToken (the OM cluster /
+  // service id). Empty if the deployment has not configured one.
+  string audience = 2;
+}
+
 /**
  * Custos authentication service. Clients exchange a credential for a signed
  * session-scoped CustosToken; OM verifies the token locally on each request.
+ * GetClusterInfo lets a client that only knows the Custos endpoint discover OM.
  */
 service CustosService {
   rpc GetSessionToken(GetSessionTokenRequest)
       returns (GetSessionTokenResponse);
   rpc RenewSessionToken(RenewSessionTokenRequest)
       returns (RenewSessionTokenResponse);
+  rpc GetClusterInfo(GetClusterInfoRequest)
+      returns (GetClusterInfoResponse);
 }

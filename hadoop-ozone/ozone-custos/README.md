@@ -54,7 +54,7 @@ to the `IdentityProviderType` that resolves its groups (today `SPNEGO → KERBER
     │ 5. CustosTokenSigner.sign() with SCM-managed HMAC key │  secure mode only
     └─────────┬─────────────────────────────────────────────┘
               ▼
-   GetSessionTokenResponse { token, ca_cert_pem[] }
+   GetSessionTokenResponse { token }
 ```
 
 Token signing uses a symmetric key managed by SCM (the same `SecretKeyClient`
@@ -86,7 +86,7 @@ used for OM RPC — to mint a SPNEGO token for the Custos service principal.
                                     5. KerberosIdentityProvider.resolveGroups()
                                          Hadoop Groups mapping for subject
                                     6. sign token with SCM HMAC key ◀── secret key
-        ◀──────────── CustosToken (+ cluster CA) ──────────
+        ◀──────────────── CustosToken ─────────────────────
   7. client attaches CustosToken to OMRequest; OM verifies locally
 ```
 
@@ -132,8 +132,9 @@ URL. Custos never sees the user's password; it only validates the resulting JWT.
                                        6. OIDC_JWT → OIDC identity provider
                                           OidcIdentityProvider (claim groups)
                                        7. sign token with SCM HMAC key
-        ◀──────── CustosToken + ca_cert_pem[] ─────────────
-  8. CLI trusts ca_cert_pem, opens TLS to OM, sends CustosToken; OM verifies
+        ◀──────────────── CustosToken ─────────────────────
+  8. CLI opens TLS to OM (trusting the out-of-band SCM root), sends
+     CustosToken; OM verifies locally
 ```
 
 **Signature validation (`OidcJwtValidator`, JJWT `io.jsonwebtoken`)**
@@ -147,94 +148,120 @@ URL. Custos never sees the user's password; it only validates the resulting JWT.
 - `iss` and `aud` must match config; `exp`/`nbf` are checked with
   `ozone.custos.oidc.clock-skew-seconds` tolerance.
 
-### Why the response carries the cluster CA
+### How the client trusts OM (and Custos)
 
 Ozone runs OM's gRPC endpoint over TLS in secure mode, using a certificate
-issued by the **SCM internal CA**. A freshly installed client (for example the
-Rust `ozone` CLI on a laptop) has no way to trust that certificate — and in a
-real deployment the cluster sits behind a VPN, so copying the CA out of band is
-impractical.
+issued by the **SCM internal CA**; Custos serves its own gRPC over TLS the same
+way (see [Server TLS](#server-tls-scm-issued-certificate)). A fresh client (for
+example the Rust `ozone` CLI on a laptop) must therefore trust the **SCM root
+CA**, and that anchor is distributed **out of band** — the operator ships the
+root CA (or a SHA-256 pin of it) to the client once. The same root validates
+both the Custos and the OM connection, and because it is the *root* it survives
+leaf/intermediate certificate rotation, so this is a one-time, low-churn step.
 
-Custos solves this as part of the login itself: on a **successful**
-`GetSessionToken`, the response includes `ca_cert_pem[]` — the cluster CA
-certificate(s) that Custos fetched from SCM
-(`SCMSecurityProtocol.getRootCACertificate()` / `getCACertificate()`). The
-client trusts those anchors and can immediately establish TLS to OM. The CA is
-public trust material and is returned **only after authentication**, so there is
-no anonymous CA endpoint to abuse. Fetching the CA is best-effort: if SCM is
-unreachable, token issuance still succeeds and `ca_cert_pem` is empty (the
-client must then trust the CA some other way).
-
-```
-  GetSessionTokenResponse
-  ├── token         CustosTokenProto (HMAC-signed; OM verifies locally)
-  ├── ca_cert_pem   repeated string  (PEM CA bundle; empty if unchanged/unavailable)
-  ├── ca_unchanged  bool             (true: reuse your cached CA)
-  └── ca_fingerprint string          (fingerprint of Custos's current CA bundle)
-```
-
-### CA fingerprint optimization (bandwidth only)
-
-Custos fetches the CA once at startup and would otherwise re-send the same few
-KB on every `GetSessionToken`. To avoid that, the client can tell Custos which
-bundle it already holds:
-
-- `GetSessionTokenRequest.known_ca_fingerprint` — the `ca_fingerprint` value the
-  client received in a previous response (opaque; the client just stores and
-  echoes it — no need to recompute it).
-- If it matches Custos's current bundle, the response sets `ca_unchanged=true`
-  and **omits** `ca_cert_pem`; the client reuses its cached CA.
-- If it differs (first call, or the CA changed), Custos sends the full bundle
-  and the new `ca_fingerprint`.
-- `ca_unchanged` disambiguates the two empty-`ca_cert_pem` cases: `true` means
-  "reuse yours", `false` with an empty `ca_fingerprint` means "Custos has no CA".
-
-```
-  1st login:  known_ca_fingerprint=""      → ca_cert_pem=[…], ca_fingerprint="abc…"
-  next login: known_ca_fingerprint="abc…"  → ca_cert_pem=[],  ca_unchanged=true
-  after rotate: known_ca_fingerprint="abc…"→ ca_cert_pem=[…], ca_fingerprint="def…"
-```
-
-The fingerprint is a lowercase-hex SHA-256 over the trimmed PEM entries joined by
-`\n`, computed server-side. **This is a payload optimization, not a security
-control** — it does not authenticate Custos or the CA. See the next section.
+Custos deliberately does **not** return the CA in the token response. Handing
+back the trust anchor over a channel the client cannot yet authenticate would be
+trust-on-first-use (see the next section); and once the client holds the root
+out of band, a delivered CA adds nothing — the root already validates OM's chain
+(sent during OM's own TLS handshake) across rotations.
 
 ### Trust bootstrap and MITM (important)
 
-The Custos gRPC endpoint is **plaintext today** (TLS is future work). A client
-that blindly trusts the delivered `ca_cert_pem` is doing trust-on-first-use with
-no anchor, which an active man-in-the-middle on the client↔Custos hop can abuse:
+Custos serves gRPC over **server-only TLS** when `ozone.security.enabled` and
+`hdds.grpc.tls.enabled` are on, using its SCM-issued certificate (see
+[Server TLS](#server-tls-scm-issued-certificate)). When TLS is off (development)
+the endpoint is plaintext, and an active man-in-the-middle on the client↔Custos
+hop can steal the bearer credentials: the OIDC JWT sent to Custos and the
+returned `CustosToken` travel in cleartext, sniffable and replayable to OM until
+they expire — this works even for a *passive* eavesdropper. The client also
+cannot cryptographically validate what Custos sends on its own (the token is
+signed with an SCM HMAC key only OM/SCM hold), so a plaintext hop cannot be made
+safe from the server side. The fix is channel authentication plus the
+out-of-band anchor above:
 
-- **CA substitution** — swap `ca_cert_pem` for the attacker's CA, then MITM the
-  OM connection with an OM cert signed by that CA, which the client now
-  "verifies" successfully.
-- **Credential theft (worse, and passive)** — the OIDC JWT sent to Custos and
-  the returned `CustosToken` travel in cleartext on that hop; both are bearer
-  secrets, sniffable and replayable to OM until they expire.
-
-The fingerprint optimization above does **not** address either: it only avoids
-re-sending known bytes. The client cannot cryptographically validate what Custos
-sends on its own (the token is signed with an SCM HMAC key only OM/SCM hold), so
-the fix cannot be server-side — it needs an **out-of-band trust anchor** and/or
-channel authentication:
-
-- **Out-of-band CA / truststore** (strongest) — the operator ships the SCM root
-  CA to the client (e.g. `--om-ca-cert <pem>`); the delivered CA is then only a
-  convenience/refresh, never the anchor.
-- **Fingerprint pin** — distribute a 64-char SHA-256 pin out of band; the client
-  rejects a delivered CA whose hash differs. Cheap; defeats CA substitution.
-  Note this is a *client-supplied security pin*, distinct from the bandwidth
-  `ca_fingerprint` above, and it does **not** stop the cleartext credential leak.
+- **Out-of-band CA / truststore** (the model here) — the operator ships the SCM
+  root CA to the client (e.g. `--om-ca-cert <pem>`); it anchors TLS to both
+  Custos and OM.
+- **Fingerprint pin** — distribute a 64-char SHA-256 pin of the root out of band
+  and have the client reject a server chain that doesn't match. Cheaper to
+  distribute than a full PEM.
 - **TOFU pinning** — trust on first connect, store the fingerprint, fail on
   change. Dev-grade only; misses a MITM present on the first run.
 
-The credential-in-cleartext leak is only truly closed by **TLS on the Custos
-endpoint** (see Future work). Once Custos serves TLS with an SCM-issued cert,
-the bootstrap becomes: distribute the SCM **root** CA out of band once (it
-rotates rarely); it anchors TLS to Custos *and* to OM. Authentication then
-happens over a confidential, authenticated channel, and the CA in the response
-arrives trustworthy — resolving the chicken-and-egg by bootstrapping a single
-long-lived root rather than every leaf certificate.
+### Server TLS (SCM-issued certificate)
+
+When `ozone.security.enabled` and `hdds.grpc.tls.enabled` are both true, Custos:
+
+1. On first boot, records the cluster id (from SCM) and a Custos uuid in a
+   VERSION file under `<ozone.metadata.dirs>/custos` (`CustosStorageConfig`).
+2. Obtains an SCM-issued certificate through `CustosCertificateClient`, which
+   CSRs to SCM via the generic `getCertificateChain` RPC with `NodeType.CUSTOS`
+   (the same path Recon uses). The cert serial id is persisted, so the
+   certificate is reused across restarts.
+3. Serves gRPC with `SslContextBuilder.forServer(certClient.getKeyManager())` —
+   **server-only** TLS. The primary caller is an external client with no
+   certificate of its own, so the client authenticates the server (trusting the
+   SCM CA) but is not required to present one. Service-to-service callers that
+   already hold SCM certs may layer mTLS on later (future work).
+
+The Java `CustosGrpcClient` trusts the server by passing the CA certificate(s)
+(the out-of-band SCM root) to `GrpcSslContexts.forClient().trustManager(caCerts)`;
+with no CA supplied it stays plaintext (development). If TLS is requested but the
+certificate cannot be loaded, the server fails fast rather than silently falling
+back to plaintext.
+
+---
+
+## Endpoint discovery (`GetClusterInfo`)
+
+A client on a cluster node reads both the OM and the Custos address from the
+shared `ozone-site.xml`. An external client (e.g. a laptop CLI) has no such
+config, so it would otherwise have to pass both endpoints. Since Custos is the
+client's first hop (it authenticates there), the client can instead pass **only
+the Custos endpoint** and discover OM from it.
+
+`GetClusterInfo` returns the OM gRPC endpoint(s) and the token audience:
+
+```
+  client --(--custos only)--> Custos.GetClusterInfo()
+        ◀── { om_grpc_address: ["om:8981"], audience: "om-service-1" }
+  then: GetSessionToken(jwt, audience) ; connect to the discovered OM
+```
+
+- Custos resolves the OM gRPC endpoint(s) from its own config at startup, reusing
+  `OmUtils` (non-HA `ozone.om.address`; HA `ozone.om.service.ids`) and the OM gRPC
+  port (`ozone.om.grpc.port`, default 8981) exactly as `GrpcOmTransport` does.
+- The audience comes from `ozone.custos.token.audience` (else the OM service id).
+  A client that omits the audience in `GetSessionToken` gets the token bound to
+  this configured value, so `--audience` can be dropped too.
+- `GetClusterInfo` is unauthenticated: it exposes only the OM gRPC address and the
+  audience — non-secret topology — over the (server-only) TLS channel. It is *not*
+  a CA/trust endpoint; the trust anchor is still the out-of-band SCM root.
+
+The flag-omission logic lives in the external client; the CLI passes `--custos`,
+calls `GetClusterInfo`, then proceeds. (Note: `GetClusterInfo` returns the OM
+**gRPC** endpoint — target that transport, not OM's Hadoop-RPC port.)
+
+### Reaching the returned address from outside the cluster
+
+`GetClusterInfo` returns the OM endpoint using the cluster's **internal** hostname
+(for example `om:8981`, because Custos resolves `ozone.om.address=om`). Inside the
+cluster that name resolves; on a laptop it does not, so the client fails with a DNS
+error. Do **not** try to fix this by changing `ozone.om.address` to `localhost` —
+that is how every service finds OM inside the cluster, and it would also break TLS
+(OM's certificate SAN is its hostname `om`, not `localhost`).
+
+Instead, map the service names to loopback in the client machine's `/etc/hosts`
+(the compose profile already publishes the ports to the host):
+
+```
+127.0.0.1  om scm custos recon s3g keycloak
+```
+
+This makes `om:8981` resolve to the published `127.0.0.1:8981` **and** keeps TLS
+verification valid — the client connects with authority `om`, which matches the
+certificate SAN. (`localhost:8981` would reach the port but fail hostname
+verification.) This is the same `/etc/hosts` approach used for the OIDC issuer.
 
 ---
 
@@ -245,13 +272,15 @@ ozone-custos/src/main/java/org/apache/hadoop/ozone/custos/server/
 ├── Custos.java                  # CLI entry point (`ozone custos`); fetchClusterCa()
 ├── CustosAuthService.java       # orchestrates auth + identity + signing
 ├── CustosConfig.java            # @ConfigGroup server settings
-├── CustosGrpcServer.java        # gRPC server
+├── CustosGrpcServer.java        # gRPC server (server-only TLS when enabled)
 ├── CustosServiceImpl.java       # CustosService gRPC impl (returns token + CA)
 ├── CustosHttpServer.java        # GET /health
 ├── CustosProviderRegistry.java  # loads ozone.custos.providers
 ├── IdentityProviderRegistry.java# loads ozone.custos.identity.providers
 ├── CredentialIdentityMapping.java
 ├── SecretKeySignedTokenSigner.java  # HMAC signing via SCM secret keys
+├── CustosCertificateClient.java # SCM-issued cert (NodeType.CUSTOS) for TLS
+├── CustosStorageConfig.java     # VERSION file: clusterId, uuid, cert serial id
 ├── provider/                    # authentication providers
 │   ├── AbstractCustosProvider.java
 │   ├── KerberosProvider.java / SpnegoValidator.java   # SPNEGO validation
@@ -314,7 +343,6 @@ Relevant suites:
 | `provider/TestOidcProvider` | JWT signature/claim validation against an in-memory JWKS |
 | `TestOidcProviderIntegration` | OIDC_JWT → CustosToken end-to-end in one JVM |
 | `TestCustosGrpcClient` | gRPC round-trip through `CustosGrpcClient` |
-| `TestCustosServiceImpl` | `GetSessionToken` returns token **and** the CA bundle |
 | `TestCustos` | boot + `/health` (binds fixed port 9894 — stop any local Custos container first) |
 
 ### End-to-end with the secure compose cluster
@@ -341,17 +369,21 @@ docker compose logs custos | grep -i "GetSessionToken succeeded"
 **OIDC path** — Keycloak imports the `ozone` realm (public client `ozone-cli`
 with the device grant enabled, user `alice`, an `om-audience` mapper). A client
 that supports the device flow (e.g. the Rust `ozone` CLI) logs in as `alice`,
-obtains a JWT, and calls Custos, which vends a CustosToken plus the cluster CA.
-The returned CA lets the client open TLS to OM at `:8981` without any out-of-band
-trust setup. Watch the flow:
+obtains a JWT, and calls Custos, which vends a CustosToken. Because the compose
+profile sets `hdds.grpc.tls.enabled=true`, Custos serves gRPC over TLS, so the
+client must trust the SCM **root** CA (obtained out of band) to reach Custos and
+OM (`:8981`). Watch the flow:
 
 ```bash
 docker compose logs -f custos | grep -iE "OIDC|GetSessionToken"
 ```
 
 > The issuer in tokens must match `ozone.custos.oidc.issuer`
-> (`http://keycloak:8080/realms/ozone`). If the CLI runs on the host, add a
-> `keycloak` entry to `/etc/hosts` so the issuer URL resolves identically.
+> (`http://keycloak:8080/realms/ozone`). If the CLI runs on the host, map the
+> cluster hostnames to loopback in `/etc/hosts` so the issuer URL, Custos, and
+> the OM endpoint returned by `GetClusterInfo` all resolve (and TLS SANs match):
+> `127.0.0.1 om scm custos recon s3g keycloak` — see
+> [Reaching the returned address from outside the cluster](#reaching-the-returned-address-from-outside-the-cluster).
 
 Before wrapping up a change here, run the repo checks:
 
@@ -379,6 +411,11 @@ Before wrapping up a change here, run the repo checks:
 - **LDAP bind authentication.** A username/password `CustosProvider` (new
   `CredentialType`) that authenticates by binding to LDAP, for deployments
   without an OIDC IdP.
-- **gRPC TLS / mTLS for Custos itself** and phasing out the Kerberos keytab in
-  favour of an SCM-issued certificate — see
+- **Mutual TLS for service callers.** Server-only gRPC TLS is implemented (see
+  [Server TLS](#server-tls-scm-issued-certificate)). **TODO:** optionally require
+  a client certificate (mTLS) for service-to-service callers that already hold
+  SCM certs, while keeping server-only TLS for external clients.
+- **Phase out the Custos Kerberos keytab.** Custos still logs in with a keytab to
+  call SCM. **TODO:** move those calls onto its SCM-issued certificate (mTLS),
+  removing the KDC dependency — see
   [Future Work in the design doc](../../hadoop-hdds/docs/content/design/common-auth-service.md#13-future-work).

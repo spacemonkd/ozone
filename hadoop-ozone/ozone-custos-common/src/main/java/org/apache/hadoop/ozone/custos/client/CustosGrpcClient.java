@@ -19,14 +19,21 @@ package org.apache.hadoop.ozone.custos.client;
 
 import io.grpc.ManagedChannel;
 import io.grpc.StatusRuntimeException;
+import io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.NettyChannelBuilder;
+import io.netty.handler.ssl.SslContext;
 import java.io.Closeable;
 import java.io.IOException;
+import java.security.cert.X509Certificate;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
+import javax.net.ssl.SSLException;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.ozone.custos.CustosCredential;
 import org.apache.hadoop.ozone.custos.CustosException;
 import org.apache.hadoop.ozone.custos.proto.CustosServiceGrpc;
+import org.apache.hadoop.ozone.custos.proto.CustosServiceProtos.GetClusterInfoRequest;
+import org.apache.hadoop.ozone.custos.proto.CustosServiceProtos.GetClusterInfoResponse;
 import org.apache.hadoop.ozone.custos.proto.CustosServiceProtos.GetSessionTokenRequest;
 import org.apache.hadoop.ozone.custos.proto.CustosServiceProtos.GetSessionTokenResponse;
 import org.apache.hadoop.ozone.custos.proto.CustosServiceProtos.RenewSessionTokenRequest;
@@ -57,12 +64,41 @@ public final class CustosGrpcClient implements Closeable {
 
   public CustosGrpcClient(String host, int port, long deadlineMs,
       long shutdownTimeoutMs) {
+    this(host, port, deadlineMs, shutdownTimeoutMs, null);
+  }
+
+  /**
+   * @param caCerts CA certificate(s) to trust for TLS to Custos (the SCM root,
+   *     obtained out of band). When null/empty the channel is plaintext
+   *     (development only).
+   */
+  public CustosGrpcClient(String host, int port, long deadlineMs,
+      long shutdownTimeoutMs, List<X509Certificate> caCerts) {
     this.shutdownTimeoutMs = shutdownTimeoutMs;
-    this.channel = NettyChannelBuilder.forAddress(host, port)
-        .usePlaintext()
-        .build();
+    this.channel = buildChannel(host, port, caCerts);
     this.blockingStub = CustosServiceGrpc.newBlockingStub(channel)
         .withDeadlineAfter(deadlineMs, TimeUnit.MILLISECONDS);
+  }
+
+  private static ManagedChannel buildChannel(String host, int port,
+      List<X509Certificate> caCerts) {
+    NettyChannelBuilder builder = NettyChannelBuilder.forAddress(host, port);
+    if (caCerts != null && !caCerts.isEmpty()) {
+      try {
+        SslContext sslContext = GrpcSslContexts.forClient()
+            .trustManager(caCerts)
+            .build();
+        builder.useTransportSecurity().sslContext(sslContext);
+        LOG.info("Custos gRPC client using TLS, trusting {} CA certificate(s)",
+            caCerts.size());
+      } catch (SSLException e) {
+        throw new IllegalStateException(
+            "Failed to configure TLS for the Custos gRPC client", e);
+      }
+    } else {
+      builder.usePlaintext();
+    }
+    return builder.build();
   }
 
   /**
@@ -119,6 +155,43 @@ public final class CustosGrpcClient implements Closeable {
     } catch (StatusRuntimeException e) {
       throw new CustosException("RenewSessionToken failed: "
           + e.getStatus().getDescription(), e);
+    }
+  }
+
+  /**
+   * Discover the OM endpoint(s) and token audience from Custos, so a client that
+   * only knows the Custos endpoint can reach OM without being told its address.
+   */
+  public ClusterInfo getClusterInfo() throws CustosException {
+    try {
+      GetClusterInfoResponse response = blockingStub.getClusterInfo(
+          GetClusterInfoRequest.newBuilder().build());
+      return new ClusterInfo(response.getOmGrpcAddressList(),
+          response.getAudience());
+    } catch (StatusRuntimeException e) {
+      throw new CustosException("GetClusterInfo failed: "
+          + e.getStatus().getDescription(), e);
+    }
+  }
+
+  /**
+   * OM endpoints and token audience returned by {@link #getClusterInfo()}.
+   */
+  public static final class ClusterInfo {
+    private final List<String> omGrpcAddresses;
+    private final String audience;
+
+    ClusterInfo(List<String> omGrpcAddresses, String audience) {
+      this.omGrpcAddresses = omGrpcAddresses;
+      this.audience = audience;
+    }
+
+    public List<String> getOmGrpcAddresses() {
+      return omGrpcAddresses;
+    }
+
+    public String getAudience() {
+      return audience;
     }
   }
 

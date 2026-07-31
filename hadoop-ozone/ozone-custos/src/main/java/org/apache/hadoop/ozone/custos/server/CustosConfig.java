@@ -96,6 +96,16 @@ public class CustosConfig {
           + "provider type must map to exactly one implementation.")
   private String identityProviders = Defaults.IDENTITY_PROVIDERS;
 
+  @Config(key = "ozone.custos.token.audience",
+      defaultValue = "",
+      type = ConfigType.STRING,
+      tags = {ConfigTag.SECURITY},
+      description = "Audience Custos stamps on issued tokens (the OM cluster / "
+          + "service id) and returns from GetClusterInfo, so a client can omit "
+          + "it. When empty, the OM service id is used if configured. This is "
+          + "distinct from ozone.custos.oidc.audience (the expected JWT aud).")
+  private String tokenAudience = Defaults.TOKEN_AUDIENCE;
+
   @Config(key = "ozone.custos.oidc.issuer",
       defaultValue = "",
       type = ConfigType.STRING,
@@ -212,6 +222,14 @@ public class CustosConfig {
     this.identityProviders = value;
   }
 
+  public String getTokenAudience() {
+    return tokenAudience;
+  }
+
+  public void setTokenAudience(String value) {
+    this.tokenAudience = value;
+  }
+
   public String getOidcIssuer() {
     return oidcIssuer;
   }
@@ -282,6 +300,7 @@ public class CustosConfig {
         "ozone.custos.kerberos.keytab";
     public static final String IDENTITY_PROVIDERS =
         "ozone.custos.identity.providers";
+    public static final String TOKEN_AUDIENCE = "ozone.custos.token.audience";
     public static final String OIDC_ISSUER = "ozone.custos.oidc.issuer";
     public static final String OIDC_AUDIENCE = "ozone.custos.oidc.audience";
     public static final String OIDC_JWKS_URI = "ozone.custos.oidc.jwks-uri";
@@ -310,6 +329,7 @@ public class CustosConfig {
     public static final int GRPC_BIND_PORT = 9894;
     public static final String KERBEROS_KEYTAB = "";
     public static final String IDENTITY_PROVIDERS = "";
+    public static final String TOKEN_AUDIENCE = "";
     public static final String OIDC_ISSUER = "";
     public static final String OIDC_AUDIENCE = "";
     public static final String OIDC_JWKS_URI = "";

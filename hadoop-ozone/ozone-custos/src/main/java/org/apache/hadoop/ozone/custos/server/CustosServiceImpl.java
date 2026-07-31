@@ -19,14 +19,13 @@ package org.apache.hadoop.ozone.custos.server;
 
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.List;
 import org.apache.hadoop.ozone.custos.CustosCredential;
 import org.apache.hadoop.ozone.custos.CustosException;
 import org.apache.hadoop.ozone.custos.client.CustosProtoHelper;
 import org.apache.hadoop.ozone.custos.proto.CustosServiceGrpc;
+import org.apache.hadoop.ozone.custos.proto.CustosServiceProtos.GetClusterInfoRequest;
+import org.apache.hadoop.ozone.custos.proto.CustosServiceProtos.GetClusterInfoResponse;
 import org.apache.hadoop.ozone.custos.proto.CustosServiceProtos.GetSessionTokenRequest;
 import org.apache.hadoop.ozone.custos.proto.CustosServiceProtos.GetSessionTokenResponse;
 import org.apache.hadoop.ozone.custos.proto.CustosServiceProtos.RenewSessionTokenRequest;
@@ -46,16 +45,14 @@ public class CustosServiceImpl extends CustosServiceGrpc.CustosServiceImplBase {
       LoggerFactory.getLogger(CustosServiceImpl.class);
 
   private final CustosAuthService authService;
-  private final List<String> caCertificates;
-  private final String caFingerprint;
+  private final List<String> omGrpcAddresses;
+  private final String audience;
 
   public CustosServiceImpl(CustosAuthService authService,
-      List<String> caCertificates) {
+      List<String> omGrpcAddresses, String audience) {
     this.authService = authService;
-    this.caCertificates = caCertificates;
-    // The CA bundle is fixed for the process lifetime (fetched once at startup),
-    // so its fingerprint can be computed once here.
-    this.caFingerprint = fingerprint(caCertificates);
+    this.omGrpcAddresses = omGrpcAddresses;
+    this.audience = audience;
   }
 
   @Override
@@ -67,24 +64,17 @@ public class CustosServiceImpl extends CustosServiceGrpc.CustosServiceImplBase {
     try {
       CustosCredential credential = CustosProtoHelper.fromProto(
           request.getCredential());
+      // Let a client that discovered its endpoint via GetClusterInfo omit the
+      // audience; fall back to the configured cluster audience when unset.
+      String tokenAudience = request.getAudience().isEmpty()
+          ? audience : request.getAudience();
       CustosTokenProto token = authService.getSessionToken(credential,
-          request.getAudience(), request.getRequestedTtlMs());
+          tokenAudience, request.getRequestedTtlMs());
       LOG.info("GetSessionToken succeeded: tokenId={}, subject={}",
           token.getTokenId(), token.getSubject());
-      GetSessionTokenResponse.Builder response = GetSessionTokenResponse
-          .newBuilder()
+      responseObserver.onNext(GetSessionTokenResponse.newBuilder()
           .setToken(token)
-          .setCaFingerprint(caFingerprint);
-      if (!caCertificates.isEmpty()
-          && caFingerprint.equals(request.getKnownCaFingerprint())) {
-        // Client already holds this exact bundle; skip re-sending it.
-        response.setCaUnchanged(true);
-        LOG.info("GetSessionToken: client CA fingerprint matched; omitting CA "
-            + "bundle (tokenId={})", token.getTokenId());
-      } else {
-        response.addAllCaCertPem(caCertificates);
-      }
-      responseObserver.onNext(response.build());
+          .build());
       responseObserver.onCompleted();
     } catch (CustosException e) {
       LOG.warn("GetSessionToken rejected (credentialType={}): {}",
@@ -118,36 +108,15 @@ public class CustosServiceImpl extends CustosServiceGrpc.CustosServiceImplBase {
     }
   }
 
-  /**
-   * Fingerprint of the CA bundle: lowercase-hex SHA-256 over the trimmed PEM
-   * entries joined by {@code '\n'} in order. Opaque to the client, which only
-   * echoes it back; empty when there is no CA.
-   */
-  private static String fingerprint(List<String> caCertificates) {
-    if (caCertificates.isEmpty()) {
-      return "";
-    }
-    StringBuilder joined = new StringBuilder();
-    for (int i = 0; i < caCertificates.size(); i++) {
-      if (i > 0) {
-        joined.append('\n');
-      }
-      joined.append(caCertificates.get(i).trim());
-    }
-    try {
-      byte[] digest = MessageDigest.getInstance("SHA-256")
-          .digest(joined.toString().getBytes(StandardCharsets.UTF_8));
-      StringBuilder hex = new StringBuilder(digest.length * 2);
-      for (byte b : digest) {
-        hex.append(Character.forDigit((b >> 4) & 0xF, 16));
-        hex.append(Character.forDigit(b & 0xF, 16));
-      }
-      return hex.toString();
-    } catch (NoSuchAlgorithmException e) {
-      // SHA-256 is guaranteed by the platform; no fingerprint means Custos
-      // always re-sends the bundle, which is safe.
-      LOG.warn("SHA-256 unavailable; CA bundle will always be re-sent", e);
-      return "";
-    }
+  @Override
+  public void getClusterInfo(GetClusterInfoRequest request,
+      StreamObserver<GetClusterInfoResponse> responseObserver) {
+    LOG.info("GetClusterInfo intercepted: returning {} OM endpoint(s)",
+        omGrpcAddresses.size());
+    responseObserver.onNext(GetClusterInfoResponse.newBuilder()
+        .addAllOmGrpcAddress(omGrpcAddresses)
+        .setAudience(audience)
+        .build());
+    responseObserver.onCompleted();
   }
 }

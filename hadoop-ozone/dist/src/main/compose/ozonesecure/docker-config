@@ -73,6 +73,8 @@ OZONE-SITE.XML_ozone.recon.kerberos.keytab.file=/etc/security/keytabs/recon.keyt
 OZONE-SITE.XML_ozone.recon.kerberos.principal=recon/recon@EXAMPLE.COM
 
 # Custos auth service
+# Custos serves gRPC over server-only TLS here because hdds.grpc.tls.enabled=true
+# (set above); it obtains an SCM-issued certificate (NodeType.CUSTOS) on startup.
 OZONE-SITE.XML_ozone.custos.enabled=true
 OZONE-SITE.XML_ozone.custos.providers=org.apache.hadoop.ozone.custos.server.provider.KerberosProvider,org.apache.hadoop.ozone.custos.server.provider.OidcProvider
 OZONE-SITE.XML_ozone.custos.identity.providers=org.apache.hadoop.ozone.custos.server.identity.KerberosIdentityProvider,org.apache.hadoop.ozone.custos.server.identity.OidcIdentityProvider
@@ -80,6 +82,7 @@ OZONE-SITE.XML_ozone.custos.kerberos.keytab=/etc/security/keytabs/custos.keytab
 OZONE-SITE.XML_ozone.custos.kerberos.principal=custos/custos@EXAMPLE.COM
 OZONE-SITE.XML_ozone.custos.grpc.host=custos
 OZONE-SITE.XML_ozone.custos.grpc.port=9894
+OZONE-SITE.XML_ozone.custos.token.audience=om-service-1
 OZONE-SITE.XML_ozone.custos.oidc.issuer=http://keycloak:8080/realms/ozone
 OZONE-SITE.XML_ozone.custos.oidc.audience=om-service-1
 OZONE-SITE.XML_ozone.custos.oidc.username-claim=preferred_username

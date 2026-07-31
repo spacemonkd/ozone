@@ -466,8 +466,10 @@ service CustosService {
 ```
 
 `GetSessionTokenRequest` carries the credential bytes, the credential type, and a requested TTL.
-`GetSessionTokenResponse` carries a serialized `CustosTokenProto` and the cluster CA certificate(s).
-Returning the CA only on a successful authentication lets a client establish TLS to OM without obtaining the trust anchor out of band; Custos fetches the CA from SCM (`SCMSecurityProtocol.getCACertificate` / `getRootCACertificate`).
+`GetSessionTokenResponse` carries a serialized `CustosTokenProto`.
+The client establishes TLS to OM (and to Custos) by trusting the SCM root CA, which the operator distributes out of band once (see [Section 11](#11-edge-cases-and-security-considerations)).
+
+A third endpoint, `GetClusterInfo`, lets an external client that only knows the Custos address discover OM: it returns the OM gRPC endpoint(s) and the token audience, which Custos resolves from its own configuration (`ozone.om.address` / `ozone.om.service.ids` and the OM gRPC port, via the same `OmUtils`/`GrpcOmTransport` resolution OM clients use). A client can then omit the OM address and audience and pass only `--custos`. This is a convenience discovery call over the (server-only) TLS channel; it exposes only non-secret topology and does not carry trust material.
 
 ### 9.2 OzoneFS getDelegationToken() change
 
@@ -623,25 +625,24 @@ A `CustosToken` authenticates; it does not authorize.
 OM runs the same `checkAcls()` path for token-verified requests as for any other, so there is no batch-scope-versus-per-key gap and no second policy decision point to keep consistent with OM's own ACLs.
 
 **Client trust bootstrap and man-in-the-middle on the Custos hop.**
-Custos returns the cluster CA in the authenticated `GetSessionToken` response so a fresh client — for example a laptop CLI reaching a cluster behind a VPN — can establish TLS to OM without obtaining the trust anchor out of band.
-But if the Custos gRPC endpoint is plaintext, a client that blindly trusts the delivered CA is doing trust-on-first-use with no anchor, and an active man-in-the-middle on the client↔Custos hop can:
+A fresh client — for example a laptop CLI reaching a cluster behind a VPN — must trust the SCM CA to establish TLS to Custos and to OM.
+Custos serves its gRPC endpoint over server-only TLS (below) when `hdds.grpc.tls.enabled` is set.
+The trust anchor is **not** delivered by Custos; it is distributed out of band (below), because handing it back over a channel the client cannot yet authenticate would be trust-on-first-use.
+If the Custos gRPC endpoint were plaintext, an active man-in-the-middle on the client↔Custos hop could:
 
-- **Substitute the CA** — swap `ca_cert_pem` for the attacker's CA, then MITM the OM connection with an OM certificate signed by that CA, which the client now "verifies" successfully.
-- **Steal the bearer credentials** — the OIDC JWT sent to Custos and the returned `CustosToken` travel in cleartext on that hop; both are bearer secrets, sniffable and replayable to OM until they expire. This is worse than the CA swap and works for a *passive* eavesdropper.
+- **Steal the bearer credentials** — the OIDC JWT sent to Custos and the returned `CustosToken` travel in cleartext on that hop; both are bearer secrets, sniffable and replayable to OM until they expire. This works even for a *passive* eavesdropper.
+- **Impersonate Custos** — a client with no anchor cannot distinguish the real Custos from an attacker, so it would hand its JWT to, and accept a token from, the attacker.
 
 This cannot be fixed server-side: the threat is impersonation *toward the client*, and the client has no key to verify what Custos sends (the token is HMAC-signed with an SCM key that only OM/SCM hold). It needs channel authentication plus a single out-of-band anchor:
 
-- **TLS on the Custos endpoint** is the real fix for the credential leak. Custos serves gRPC over TLS with an SCM-issued certificate, gated by `hdds.grpc.tls.enabled` like every other Ozone gRPC service. Because Custos's primary caller is an external client with no certificate of its own, this is **server-only TLS** (the client authenticates the server; it does not present a client certificate) — not mutual TLS. Service-to-service callers that already hold SCM certificates may additionally use mTLS.
-- **A single out-of-band root anchor** resolves the apparent chicken-and-egg (needing to trust Custos before Custos can hand out trust). The operator ships the SCM *root* CA to the client once — a truststore file or a SHA-256 pin. The root rotates rarely, so this is a one-time, low-churn step, and that one anchor validates TLS to Custos *and* to OM. Authentication then happens over a confidential, authenticated channel, and the CA delivered in the response becomes a convenience/refresh rather than the anchor. The point is to bootstrap one long-lived root, not every leaf certificate.
-- **Client-side options**, in decreasing strength: an out-of-band CA/truststore (`--om-ca-cert`); a fingerprint pin distributed out of band (defeats CA substitution but not the cleartext credential leak); or trust-on-first-use (development only). None of the CA-validation options close the credential leak — only TLS on the Custos hop does, so it is the priority.
-
-The `ca_fingerprint` field in the login response is a bandwidth optimization (let the client skip re-downloading an unchanged CA); it is explicitly **not** a security control and must not be confused with a client-supplied security pin.
+- **TLS on the Custos endpoint** is the real fix for the credential leak, and is implemented. Custos serves gRPC over TLS with an SCM-issued certificate, gated by `hdds.grpc.tls.enabled` like every other Ozone gRPC service. It obtains the certificate through a `CustosCertificateClient` that CSRs to SCM via the existing generic `getCertificateChain` RPC with a new `NodeType.CUSTOS` (the same path Recon uses), persisting the cert serial id in a Custos VERSION file so the certificate is reused across restarts. Because Custos's primary caller is an external client with no certificate of its own, this is **server-only TLS** (the client authenticates the server; it does not present a client certificate) — not mutual TLS. Service-to-service callers that already hold SCM certificates may additionally use mTLS (future work).
+- **A single out-of-band root anchor** resolves the apparent chicken-and-egg (needing to trust Custos before you can talk to it). The operator ships the SCM *root* CA to the client once — a truststore file or a SHA-256 pin. The root rotates rarely, so this is a one-time, low-churn step, and that one anchor validates TLS to Custos *and* to OM, since both leaf certificates are issued by the same SCM CA. The point is to bootstrap one long-lived root, not every leaf certificate.
+- **Client-side options**, in decreasing strength: an out-of-band CA/truststore (`--om-ca-cert`); a fingerprint pin of the root distributed out of band; or trust-on-first-use (development only). Only TLS on the Custos hop closes the credential leak, so it is the priority.
 
 **CA rotation seen by the client.**
-Custos fetches the cluster CA once at startup, so clients keep receiving the bundle Custos loaded until Custos refreshes it.
-A client that trusts the SCM *root* is unaffected by leaf/intermediate CA rotation — the new chain still validates to the root it pinned, which is the main reason to anchor on the root rather than an intermediate.
-A client that pinned an intermediate CA must re-fetch after rotation.
-Custos should refresh its cached CA (periodically, or on an SCM rotation notification) so newly delivered bundles track SCM; until then a delivered bundle can lag — safe for root-anchored clients, stale only for intermediate-pinned ones.
+A client that trusts the SCM *root* is unaffected by leaf/intermediate certificate rotation — a renewed OM or Custos certificate still validates to the root it pinned, and each server presents its full chain during the TLS handshake.
+Only a client that pinned an intermediate must re-fetch after rotation, which is the main reason to anchor on the root.
+Root rotation (rare) requires redistributing the new root out of band; a client whose pinned root is stale cannot bootstrap the new one over a connection secured by it, so root rotation is planned with an overlap window.
 
 **JWKS and issuer transport (OIDC path).**
 The OIDC provider fetches the issuer's signing keys (JWKS) to verify JWT signatures.

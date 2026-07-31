@@ -23,6 +23,7 @@ import static org.apache.hadoop.ozone.custos.server.CustosConfig.Keys.HTTP_BIND_
 import static org.apache.hadoop.ozone.custos.server.CustosConfig.Keys.HTTP_BIND_PORT;
 import static org.apache.hadoop.ozone.custos.server.CustosConfig.Keys.IDENTITY_PROVIDERS;
 import static org.apache.hadoop.ozone.custos.server.CustosConfig.Keys.PROVIDERS;
+import static org.apache.hadoop.ozone.custos.server.CustosConfig.Keys.TOKEN_AUDIENCE;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.net.InetSocketAddress;
@@ -77,6 +78,44 @@ class TestCustosGrpcClient {
       assertThat(token.getAuthProvider()).isEqualTo(IdentityProviderType.OIDC.name());
       assertThat(token.getAudience()).isEqualTo("om1");
       assertThat(token.getExpiryMs()).isPositive();
+    }
+  }
+
+  @Test
+  void getClusterInfoReturnsOmEndpointAndAudience() throws Exception {
+    OzoneConfiguration conf = newConf();
+    conf.set(PROVIDERS, StubOidcProvider.class.getName());
+    conf.set(IDENTITY_PROVIDERS, OidcIdentityProvider.class.getName());
+    conf.set("ozone.om.address", "myom");
+    conf.set(TOKEN_AUDIENCE, "om-service-1");
+    custos.start(conf);
+
+    InetSocketAddress grpcAddress = custos.getGrpcAddress();
+    try (CustosGrpcClient client = new CustosGrpcClient(
+        grpcAddress.getHostString(), grpcAddress.getPort(), 10_000L)) {
+      CustosGrpcClient.ClusterInfo info = client.getClusterInfo();
+      // Host from ozone.om.address, port is OM's gRPC port (default 8981).
+      assertThat(info.getOmGrpcAddresses()).containsExactly("myom:8981");
+      assertThat(info.getAudience()).isEqualTo("om-service-1");
+    }
+  }
+
+  @Test
+  void emptyAudienceDefaultsToConfiguredAudience() throws Exception {
+    OzoneConfiguration conf = newConf();
+    conf.set(PROVIDERS, StubOidcProvider.class.getName());
+    conf.set(IDENTITY_PROVIDERS, OidcIdentityProvider.class.getName());
+    conf.set(TOKEN_AUDIENCE, "om-service-1");
+    custos.start(conf);
+
+    InetSocketAddress grpcAddress = custos.getGrpcAddress();
+    CustosCredential credential = new CustosCredential(CredentialType.OIDC_JWT,
+        new byte[] {1}, Collections.singletonMap("subject", "alice"));
+    try (CustosGrpcClient client = new CustosGrpcClient(
+        grpcAddress.getHostString(), grpcAddress.getPort(), 10_000L)) {
+      // Client omits the audience; Custos binds the token to the configured one.
+      CustosTokenProto token = client.getSessionToken(credential, "", 60_000L);
+      assertThat(token.getAudience()).isEqualTo("om-service-1");
     }
   }
 }
