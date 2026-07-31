@@ -88,6 +88,7 @@ import org.apache.hadoop.hdds.scm.client.HddsClientUtils;
 import org.apache.hadoop.hdds.scm.pipeline.Pipeline;
 import org.apache.hadoop.hdds.scm.storage.ByteBufferStreamOutput;
 import org.apache.hadoop.hdds.scm.storage.MultipartInputStream;
+import org.apache.hadoop.hdds.security.SecurityConfig;
 import org.apache.hadoop.hdds.security.x509.certificate.client.CACertificateProvider;
 import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.hdds.utils.IOUtils;
@@ -299,7 +300,8 @@ public class RpcClient implements ClientProtocol {
       // When Custos is enabled, exchange the current Kerberos identity for a
       // signed Custos session token and attach it to every OMRequest.
       if (conf.getBoolean(CustosClientConfig.ENABLED, false)) {
-        fetchAndSetCustosToken(ozoneManagerProtocolClientSideTranslatorPB);
+        fetchAndSetCustosToken(ozoneManagerProtocolClientSideTranslatorPB,
+            serviceInfoEx);
       }
     }
 
@@ -429,12 +431,19 @@ public class RpcClient implements ClientProtocol {
    * once, at client construction, when {@code ozone.custos.enabled} is true.
    */
   private void fetchAndSetCustosToken(
-      OzoneManagerProtocolClientSideTranslatorPB omClient) throws IOException {
+      OzoneManagerProtocolClientSideTranslatorPB omClient,
+      ServiceInfoEx serviceInfoEx) throws IOException {
     OzoneConfiguration ozoneConf = OzoneConfiguration.of(conf);
     String custosHost = conf.get(CustosClientConfig.GRPC_HOST,
         CustosClientConfig.GRPC_HOST_DEFAULT);
-    try (CustosGrpcClient custosClient =
-        CustosGrpcClient.fromConfiguration(ozoneConf)) {
+    // Custos serves TLS when hdds.grpc.tls.enabled is set (as the OM gRPC
+    // endpoint does), so trust the cluster CA that OM just returned in
+    // getServiceInfo; otherwise use a plaintext channel (dev/insecure).
+    boolean grpcTls = new SecurityConfig(ozoneConf).isGrpcTlsEnabled();
+    try (CustosGrpcClient custosClient = grpcTls
+        ? CustosGrpcClient.fromConfiguration(ozoneConf,
+            serviceInfoEx.provideCACerts())
+        : CustosGrpcClient.fromConfiguration(ozoneConf)) {
       CustosCredential credential =
           KerberosCredentials.fromCurrentUser(ozoneConf, custosHost);
       CustosTokenProto token = custosClient.getSessionToken(credential, "", 0L);

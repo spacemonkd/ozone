@@ -102,16 +102,26 @@ public final class CustosGrpcClient implements Closeable {
   }
 
   /**
-   * Create a client from cluster configuration.
+   * Create a plaintext client from cluster configuration (TLS disabled).
    */
   public static CustosGrpcClient fromConfiguration(Configuration conf) {
+    return fromConfiguration(conf, null);
+  }
+
+  /**
+   * Create a client from cluster configuration. When {@code caCerts} is non-null
+   * and non-empty the channel uses TLS trusting those CA certificate(s) (the
+   * cluster CA, e.g. from OM's {@code getServiceInfo}); otherwise it is plaintext.
+   */
+  public static CustosGrpcClient fromConfiguration(Configuration conf,
+      List<X509Certificate> caCerts) {
     String host = conf.get(CustosClientConfig.GRPC_HOST,
         CustosClientConfig.GRPC_HOST_DEFAULT);
     int port = conf.getInt(CustosClientConfig.GRPC_PORT,
         CustosClientConfig.GRPC_PORT_DEFAULT);
     long deadlineMs = conf.getLong(CustosClientConfig.GRPC_DEADLINE_MS,
         CustosClientConfig.GRPC_DEADLINE_MS_DEFAULT);
-    return new CustosGrpcClient(host, port, deadlineMs);
+    return new CustosGrpcClient(host, port, deadlineMs, 5_000L, caCerts);
   }
 
   /**
