@@ -73,6 +73,11 @@ public class CustosCertificateClient extends DefaultCertificateClient {
       String subject = UserGroupInformation.getCurrentUser()
           .getShortUserName() + "@" + hostname;
 
+      // addInetAddresses (called by super) uses DomainValidator which rejects
+      // single-label names like "custos" used in Docker compose deployments.
+      // Add the DNS SAN directly so TLS hostname verification passes.
+      builder.addDnsName(hostname);
+
       builder.setCA(false)
           .setKey(new KeyPair(getPublicKey(), getPrivateKey()))
           .setConfiguration(getSecurityConfig())

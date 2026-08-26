@@ -233,7 +233,9 @@ public class DefaultProfile implements PKIProfile {
         return false;
       }
     case GeneralName.dNSName:
-      return DomainValidator.getInstance().isValid(value);
+      // Allow local/single-label hostnames (e.g. Docker service names like
+      // "custos", "om") in addition to public FQDNs.
+      return DomainValidator.getInstance(true).isValid(value);
     case GeneralName.otherName:
       // for other name it's a general string, nothing to validate
       return true;
