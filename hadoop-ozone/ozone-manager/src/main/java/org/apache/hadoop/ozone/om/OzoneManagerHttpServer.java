@@ -19,6 +19,7 @@ package org.apache.hadoop.ozone.om;
 
 import static org.apache.hadoop.ozone.OzoneConsts.OZONE_DB_CHECKPOINT_HTTP_ENDPOINT;
 import static org.apache.hadoop.ozone.OzoneConsts.OZONE_DB_CHECKPOINT_HTTP_ENDPOINT_V2;
+import static org.apache.hadoop.ozone.OzoneConsts.OZONE_OM_CREDENTIAL_HTTP_ENDPOINT;
 import static org.apache.hadoop.ozone.OzoneConsts.OZONE_OM_SERVICE_LIST_HTTP_ENDPOINT;
 
 import java.io.IOException;
@@ -42,6 +43,17 @@ public class OzoneManagerHttpServer extends BaseHttpServer {
         OMDBCheckpointServlet.class);
     addServlet("dbCheckpointv2", OZONE_DB_CHECKPOINT_HTTP_ENDPOINT_V2,
         OMDBCheckpointServletInodeBasedXfer.class);
+    if (conf.getBoolean(OMConfigKeys.OZONE_OM_CREDENTIAL_REST_ENABLED_KEY,
+        OMConfigKeys.OZONE_OM_CREDENTIAL_REST_ENABLED_DEFAULT)) {
+      // In "spnego" mode the SPNEGO filter authenticates the caller (e.g. Knox)
+      // and the servlet impersonates the end user via doAs; in "mtls" mode no
+      // filter is applied and the servlet authenticates the TLS client cert.
+      boolean spnego = "spnego".equalsIgnoreCase(
+          conf.get(OMConfigKeys.OZONE_OM_CREDENTIAL_REST_AUTH_KEY,
+              OMConfigKeys.OZONE_OM_CREDENTIAL_REST_AUTH_DEFAULT));
+      addInternalServlet("credential", OZONE_OM_CREDENTIAL_HTTP_ENDPOINT,
+          OMDelegationTokenServlet.class, spnego);
+    }
     getWebAppContext().setAttribute(OzoneConsts.OM_CONTEXT_ATTRIBUTE, om);
   }
 

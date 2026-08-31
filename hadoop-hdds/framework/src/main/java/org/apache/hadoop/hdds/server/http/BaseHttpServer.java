@@ -26,6 +26,8 @@ import static org.apache.hadoop.ozone.OzoneConfigKeys.OZONE_ADMINISTRATORS;
 import static org.apache.hadoop.ozone.OzoneConfigKeys.OZONE_ADMINISTRATORS_GROUPS;
 import static org.apache.hadoop.ozone.OzoneConfigKeys.OZONE_CLIENT_HTTPS_NEED_AUTH_DEFAULT;
 import static org.apache.hadoop.ozone.OzoneConfigKeys.OZONE_CLIENT_HTTPS_NEED_AUTH_KEY;
+import static org.apache.hadoop.ozone.OzoneConfigKeys.OZONE_CLIENT_HTTPS_WANT_AUTH_DEFAULT;
+import static org.apache.hadoop.ozone.OzoneConfigKeys.OZONE_CLIENT_HTTPS_WANT_AUTH_KEY;
 import static org.apache.hadoop.ozone.OzoneConfigKeys.OZONE_HTTP_SECURITY_ENABLED_DEFAULT;
 import static org.apache.hadoop.ozone.OzoneConfigKeys.OZONE_HTTP_SECURITY_ENABLED_KEY;
 import static org.apache.hadoop.ozone.OzoneConfigKeys.OZONE_SECURITY_ENABLED_DEFAULT;
@@ -261,6 +263,16 @@ public abstract class BaseHttpServer implements AutoCloseable {
   }
 
   /**
+   * Add an internal servlet, optionally guarded by the SPNEGO authentication
+   * filter (and no other filters) when {@code requireAuth} is true and security
+   * is enabled.
+   */
+  protected void addInternalServlet(String servletName, String pathSpec,
+      Class<? extends HttpServlet> clazz, boolean requireAuth) {
+    httpServer.addInternalServlet(servletName, pathSpec, clazz, requireAuth);
+  }
+
+  /**
    * Add a filter to BaseHttpServer.
    *
    * @param filterName The name of the filter
@@ -376,6 +388,9 @@ public abstract class BaseHttpServer implements AutoCloseable {
         .needsClientAuth(
             sslConf.getBoolean(OZONE_CLIENT_HTTPS_NEED_AUTH_KEY,
                 OZONE_CLIENT_HTTPS_NEED_AUTH_DEFAULT))
+        .wantsClientAuth(
+            sslConf.getBoolean(OZONE_CLIENT_HTTPS_WANT_AUTH_KEY,
+                OZONE_CLIENT_HTTPS_WANT_AUTH_DEFAULT))
         .keyPassword(getPassword(sslConf, OZONE_SERVER_HTTPS_KEYPASSWORD_KEY))
         .keyStore(
             sslConf.get(SSLFactory.SSL_SERVER_KEYSTORE_LOCATION),
@@ -451,6 +466,9 @@ public abstract class BaseHttpServer implements AutoCloseable {
     boolean requireClientAuth = conf.getBoolean(
         OZONE_CLIENT_HTTPS_NEED_AUTH_KEY, OZONE_CLIENT_HTTPS_NEED_AUTH_DEFAULT);
     sslConf.setBoolean(OZONE_CLIENT_HTTPS_NEED_AUTH_KEY, requireClientAuth);
+    boolean wantClientAuth = conf.getBoolean(
+        OZONE_CLIENT_HTTPS_WANT_AUTH_KEY, OZONE_CLIENT_HTTPS_WANT_AUTH_DEFAULT);
+    sslConf.setBoolean(OZONE_CLIENT_HTTPS_WANT_AUTH_KEY, wantClientAuth);
     return new LegacyHadoopConfigurationSource(sslConf);
   }
 

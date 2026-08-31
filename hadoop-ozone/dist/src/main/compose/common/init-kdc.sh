@@ -75,6 +75,10 @@ export_keytab HTTP/s3g HTTP
 export_keytab HTTP/httpfs HTTP
 export_keytab HTTP/ozone HTTP
 
+# for the Apache Knox gateway (credential REST bootstrap)
+export_keytab knox/knox knox
+export_keytab HTTP/knox knox
+
 export_keytab hadoop/rm hadoop
 
 export_keytab rm/rm rm

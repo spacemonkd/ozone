@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Licensed to the Apache Software Foundation (ASF) under one or more
+  contributor license agreements.  See the NOTICE file distributed with
+  this work for additional information regarding copyright ownership.
+  The ASF licenses this file to You under the Apache License, Version 2.0
+  (the "License"); you may not use this file except in compliance with
+  the License.  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<!--
+  PoC topology: deploys at https://knox:8443/gateway/ozone/...
+  Edge authentication is Anonymous for the proof of concept ONLY. In a real
+  deployment replace it with pac4j (OIDC/SAML), shiro (LDAP), or hadoopauth so
+  Knox authenticates the real end user before minting a token. The end user is
+  passed to OM with the ?doas=<user> query parameter; Knox authenticates to OM
+  with its own Kerberos (knox) identity via the SPNEGO dispatch.
+-->
+<topology>
+  <gateway>
+    <provider>
+      <role>authentication</role>
+      <name>Anonymous</name>
+      <enabled>true</enabled>
+    </provider>
+    <provider>
+      <role>identity-assertion</role>
+      <name>Default</name>
+      <enabled>true</enabled>
+    </provider>
+  </gateway>
+
+  <service>
+    <role>OZONEDT</role>
+    <url>http://om:9874/credential/token</url>
+  </service>
+</topology>

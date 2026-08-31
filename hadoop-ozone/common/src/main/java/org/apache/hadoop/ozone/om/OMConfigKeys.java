@@ -364,6 +364,25 @@ public final class OMConfigKeys {
   public static final String OZONE_OM_HTTP_AUTH_CONFIG_PREFIX =
       "ozone.om.http.auth.";
 
+  // Credential REST endpoint (delegation token over HTTP, e.g. fronted by Knox).
+  public static final String OZONE_OM_CREDENTIAL_REST_ENABLED_KEY =
+      "ozone.om.credential.rest.enabled";
+  public static final boolean OZONE_OM_CREDENTIAL_REST_ENABLED_DEFAULT = false;
+  // How the credential endpoint authenticates the caller (the gateway):
+  // "mtls"   - the caller presents a TLS client certificate (see allowed
+  //            principals below); or
+  // "spnego" - the caller authenticates with SPNEGO/Kerberos (as Apache Knox
+  //            does), then impersonates the end user via doAs. This is the
+  //            WebHDFS/HttpFS/Oozie pattern and requires proxyuser config.
+  public static final String OZONE_OM_CREDENTIAL_REST_AUTH_KEY =
+      "ozone.om.credential.rest.auth";
+  public static final String OZONE_OM_CREDENTIAL_REST_AUTH_DEFAULT = "mtls";
+  // Allowed client-certificate CNs (comma separated) permitted to request
+  // delegation tokens on behalf of other users via the credential endpoint
+  // (used only in "mtls" mode).
+  public static final String OZONE_OM_CREDENTIAL_REST_ALLOWED_PRINCIPALS_KEY =
+      "ozone.om.credential.rest.allowed.principals";
+
   // Delegation token related keys
   public static final String  DELEGATION_REMOVER_SCAN_INTERVAL_KEY =
       "ozone.manager.delegation.remover.scan.interval";

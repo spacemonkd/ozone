@@ -591,6 +591,9 @@ public final class OzoneConfigKeys {
   public static final String OZONE_CLIENT_HTTPS_NEED_AUTH_KEY =
       "ozone.https.client.need-auth";
   public static final boolean OZONE_CLIENT_HTTPS_NEED_AUTH_DEFAULT = false;
+  public static final String OZONE_CLIENT_HTTPS_WANT_AUTH_KEY =
+      "ozone.https.client.want-auth";
+  public static final boolean OZONE_CLIENT_HTTPS_WANT_AUTH_DEFAULT = false;
 
   public static final int OZONE_INIT_DEFAULT_LAYOUT_VERSION_DEFAULT = -1;
   public static final String OZONE_CLIENT_KEY_PROVIDER_CACHE_EXPIRY =

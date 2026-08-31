@@ -3466,6 +3466,47 @@
     </description>
   </property>
   <property>
+    <name>ozone.om.credential.rest.enabled</name>
+    <value>false</value>
+    <tag>OM, SECURITY</tag>
+    <description>
+      Whether OM exposes the credential REST endpoint (/credential/token) that
+      issues, renews, and cancels Ozone delegation tokens over HTTPS. Intended
+      to be fronted by a gateway such as Apache Knox so external clients can
+      bootstrap a token without Kerberos. Requires an HTTPS OM HTTP server with
+      ozone.https.client.want-auth=true (mutual TLS), and Hadoop proxyuser
+      configuration (hadoop.proxyuser.&lt;gateway&gt;.*) for the gateway to
+      impersonate the end user. Disabled by default.
+    </description>
+  </property>
+  <property>
+    <name>ozone.om.credential.rest.auth</name>
+    <value>mtls</value>
+    <tag>OM, SECURITY</tag>
+    <description>
+      How the OM credential REST endpoint authenticates the calling gateway.
+      "mtls": the caller presents a TLS client certificate whose CN is in
+      ozone.om.credential.rest.allowed.principals (needs
+      ozone.https.client.want-auth=true). "spnego": the caller authenticates
+      with SPNEGO/Kerberos (as Apache Knox does) and impersonates the end user
+      via the doas parameter — the WebHDFS/HttpFS/Oozie pattern, which requires
+      hadoop.proxyuser.&lt;gateway&gt;.* configuration. Default is mtls.
+    </description>
+  </property>
+  <property>
+    <name>ozone.om.credential.rest.allowed.principals</name>
+    <value/>
+    <tag>OM, SECURITY</tag>
+    <description>
+      Comma-separated list of client-certificate common names (CN) allowed to
+      call the OM credential REST endpoint in "mtls" mode. The caller (for
+      example Knox) presents an SCM-issued client certificate over mutual TLS;
+      its CN must be in this list. If empty, the endpoint rejects all callers
+      even when enabled. Not used in "spnego" mode (proxyuser config governs
+      impersonation there).
+    </description>
+  </property>
+  <property>
     <name>hdds.scm.http.auth.type</name>
     <value>simple</value>
     <tag>OM, SECURITY, KERBEROS</tag>
@@ -3811,6 +3852,21 @@
     <value>false</value>
     <description>
       Whether SSL client certificate authentication is required
+    </description>
+  </property>
+  <property>
+    <name>ozone.https.client.want-auth</name>
+    <tag>OZONE, SECURITY, MANAGEMENT</tag>
+    <value>false</value>
+    <description>
+      Whether the HTTPS server should request (but not require) a client
+      certificate during the TLS handshake. Unlike ozone.https.client.need-auth,
+      this is optional: connections without a client certificate still succeed,
+      so a browser UI on the same connector keeps working while a servlet can
+      inspect the presented certificate when one is offered. Has no effect when
+      ozone.https.client.need-auth is true. Used by the OM credential REST
+      endpoint to authenticate a gateway (for example Apache Knox) by its
+      SCM-issued client certificate.
     </description>
   </property>
   <property>

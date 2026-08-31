@@ -232,6 +232,7 @@ public final class HttpServer2 implements FilterContainer {
     private String usernameConfKey;
     private String keytabConfKey;
     private boolean needsClientAuth;
+    private boolean wantsClientAuth;
     private String trustStore;
     private String trustStorePassword;
     private String trustStoreType;
@@ -312,6 +313,19 @@ public final class HttpServer2 implements FilterContainer {
      */
     public Builder needsClientAuth(boolean value) {
       this.needsClientAuth = value;
+      return this;
+    }
+
+    /**
+     * Specify whether the server should request (but not require) a client
+     * certificate in SSL connections. Unlike {@link #needsClientAuth(boolean)},
+     * this is optional: a connection without a client certificate still
+     * completes the TLS handshake, so servers that also serve a browser UI on
+     * the same connector keep working while a servlet can still inspect the
+     * presented certificate when one is offered.
+     */
+    public Builder wantsClientAuth(boolean value) {
+      this.wantsClientAuth = value;
       return this;
     }
 
@@ -556,6 +570,10 @@ public final class HttpServer2 implements FilterContainer {
       SslContextFactory.Server sslContextFactory =
           new SslContextFactory.Server();
       sslContextFactory.setNeedClientAuth(needsClientAuth);
+      // Optional client auth only applies when the client cert is not required.
+      if (!needsClientAuth && wantsClientAuth) {
+        sslContextFactory.setWantClientAuth(true);
+      }
       if (keyPassword != null) {
         sslContextFactory.setKeyManagerPassword(keyPassword);
       }

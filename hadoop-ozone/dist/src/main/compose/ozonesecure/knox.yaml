@@ -1,0 +1,57 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Overlay that adds Apache Knox in front of the OM credential REST endpoint.
+# Usage (from this directory):
+#   docker compose -f docker-compose.yaml -f knox.yaml up -d
+# See knox/README.md for the full walkthrough.
+
+services:
+  # Enable the credential REST endpoint on OM in SPNEGO mode and let the Knox
+  # service principal impersonate end users (proxyuser).
+  om:
+    environment:
+      - OZONE-SITE.XML_ozone.om.credential.rest.enabled=true
+      - OZONE-SITE.XML_ozone.om.credential.rest.auth=spnego
+      - CORE-SITE.XML_hadoop.proxyuser.knox.hosts=*
+      - CORE-SITE.XML_hadoop.proxyuser.knox.users=*
+      - CORE-SITE.XML_hadoop.proxyuser.knox.groups=*
+
+  knox:
+    image: ${KNOX_IMAGE:-apache/knox}:${KNOX_VERSION:-2.1.0}
+    hostname: knox
+    dns_search: .
+    ports:
+      - 8443:8443
+    environment:
+      # PoC master secret; overrides the image default. Not for production.
+      MASTER_SECRET: knox
+      # Do not attempt to fetch Let's Encrypt staging roots (offline compose).
+      IMPORT_LETS_ENCRYPT_STAGING_CERTS: "false"
+      # Kerberos client config for the SPNEGO dispatch to OM.
+      KNOX_GATEWAY_DBG_OPTS: -Djava.security.krb5.conf=/etc/krb5.conf
+    volumes:
+      - ../_keytabs:/etc/security/keytabs
+      - ./krb5.conf:/etc/krb5.conf
+      - ./knox/topologies:/home/knox/knox/conf/topologies
+      - ./knox/services/ozonedt:/home/knox/knox/data/services/ozonedt
+      - ./knox/gateway-site.xml:/home/knox/knox/conf/gateway-site.xml
+      - ./knox/krb5JAASLogin.conf:/home/knox/knox/conf/krb5JAASLogin.conf
+    depends_on:
+      kdc:
+        condition: service_healthy
+      om:
+        condition: service_started
